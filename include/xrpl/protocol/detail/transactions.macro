@@ -559,3 +559,9 @@ TRANSACTION(ttUNL_MODIFY, 102, UNLModify, Delegation::notDelegatable, ({
     {sfLedgerSequence, soeREQUIRED},
     {sfUNLModifyValidator, soeREQUIRED},
 }))
+
+TRANSACTION(ttMY_CUSTOM_TX, 1001, MyCustomTx, Delegation::delegatable, ({
+    {sfDestination, soeREQUIRED},
+    {sfCustomField, soeREQUIRED},
+    {sfOptionalField, soeOPTIONAL}
+}))

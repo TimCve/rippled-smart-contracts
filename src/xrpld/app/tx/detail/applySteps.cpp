@@ -69,6 +69,7 @@
 #include <xrpld/app/tx/detail/VaultSet.h>
 #include <xrpld/app/tx/detail/VaultWithdraw.h>
 #include <xrpld/app/tx/detail/XChainBridge.h>
+#include <xrpld/app/tx/detail/MyCustomTx.h>
 
 #include <xrpl/protocol/TxFormats.h>
 

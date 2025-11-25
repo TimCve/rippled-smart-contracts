@@ -276,6 +276,10 @@ TYPED_SFIELD(sfProvider,                 VL,        29)
 TYPED_SFIELD(sfMPTokenMetadata,          VL,        30)
 TYPED_SFIELD(sfCredentialType,           VL,        31)
 
+// custom
+TYPED_SFIELD(sfCustomField,              VL,        32)
+TYPED_SFIELD(sfOptionalField,            VL,        33)
+
 // account (common)
 TYPED_SFIELD(sfAccount,                  ACCOUNT,    1)
 TYPED_SFIELD(sfOwner,                    ACCOUNT,    2)

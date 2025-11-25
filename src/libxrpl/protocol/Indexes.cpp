@@ -96,6 +96,7 @@ enum class LedgerNameSpace : std::uint16_t {
     PERMISSIONED_DOMAIN = 'm',
     DELEGATE = 'E',
     VAULT = 'V',
+    MY_CUSTOM_SLE = 'M',
 
     // No longer used or supported. Left here to reserve the space
     // to avoid accidental reuse.
@@ -579,6 +580,20 @@ permissionedDomain(uint256 const& domainID) noexcept
 {
     return {ltPERMISSIONED_DOMAIN, domainID};
 }
+
+Keylet
+myCustomSLE(AccountID const& src, std::uint32_t seq) noexcept
+{
+    return {ltMY_CUSTOM_SLE, indexHash(LedgerNameSpace::MY_CUSTOM_SLE, src, seq)};
+}
+
+/*
+Keylet
+check(AccountID const& id, std::uint32_t seq) noexcept
+{
+    return {ltCHECK, indexHash(LedgerNameSpace::CHECK, id, seq)};
+}
+*/
 
 }  // namespace keylet
 
