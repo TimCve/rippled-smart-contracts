@@ -112,6 +112,10 @@ XRPNotCreated::visitEntry(
                 if (isXRP((*before)[sfAmount]))
                     drops_ -= (*before)[sfAmount].xrp().drops();
                 break;
+            case ltCONTRACT_STATE:
+                if (isXRP((*before)[sfAmount]))
+                    drops_ -= (*before)[sfAmount].xrp().drops();
+                break;
             default:
                 break;
         }
@@ -131,6 +135,10 @@ XRPNotCreated::visitEntry(
                                   .drops();
                 break;
             case ltESCROW:
+                if (!isDelete && isXRP((*after)[sfAmount]))
+                    drops_ += (*after)[sfAmount].xrp().drops();
+                break;
+            case ltCONTRACT_STATE:
                 if (!isDelete && isXRP((*after)[sfAmount]))
                     drops_ += (*after)[sfAmount].xrp().drops();
                 break;
@@ -544,6 +552,8 @@ LedgerEntryTypesMatch::visitEntry(
             case ltPERMISSIONED_DOMAIN:
             case ltVAULT:
             case ltMY_CUSTOM_SLE:
+            case ltSMART_CONTRACT:
+            case ltCONTRACT_STATE:
                 break;
             default:
                 invalidTypeAdded_ = true;

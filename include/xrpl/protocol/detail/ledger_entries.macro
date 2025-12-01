@@ -504,7 +504,6 @@ LEDGER_ENTRY(ltVAULT, 0x0084, Vault, vault, ({
 }))
 
 /** For MyCustomTx
-
     \sa keylet::myCustomSLE
  */
 LEDGER_ENTRY(ltMY_CUSTOM_SLE, 0x0085, MyCustomSLE, my_custom_sle, ({
@@ -513,6 +512,33 @@ LEDGER_ENTRY(ltMY_CUSTOM_SLE, 0x0085, MyCustomSLE, my_custom_sle, ({
     {sfCustomField,          soeREQUIRED},
 }))
 
+/** Smart contract definition object.
+    \sa keylet::smartContract
+ */
+LEDGER_ENTRY(ltSMART_CONTRACT, 0x0086, SmartContract, smart_contract, ({
+    {sfAccount,              soeREQUIRED},
+    {sfContractAddress,      soeREQUIRED},
+    {sfContractName,         soeOPTIONAL},
+    {sfContractCode,         soeREQUIRED},
+    {sfOwnerNode,            soeREQUIRED},
+    {sfPreviousTxnID,        soeREQUIRED},
+    {sfPreviousTxnLgrSeq,    soeREQUIRED},
+}))
+
+/** Smart contract state entry.
+    \sa keylet::contractState
+ */
+LEDGER_ENTRY(ltCONTRACT_STATE, 0x0087, ContractState, contract_state, ({
+    {sfAccount,              soeREQUIRED},
+    {sfContractAddress,      soeREQUIRED},
+    {sfContractStateID,      soeREQUIRED},
+    {sfContractRecipient,    soeOPTIONAL},
+    {sfAmount,               soeOPTIONAL},
+    {sfContractState,        soeREQUIRED},
+    {sfOwnerNode,            soeREQUIRED},
+    {sfPreviousTxnID,        soeREQUIRED},
+    {sfPreviousTxnLgrSeq,    soeREQUIRED},
+}))
+
 #undef EXPAND
 #undef LEDGER_ENTRY_DUPLICATE
-

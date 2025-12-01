@@ -352,6 +352,12 @@ permissionedDomain(uint256 const& domainID) noexcept;
 
 Keylet
 myCustomSLE(AccountID const& src, std::uint32_t seq) noexcept;
+
+Keylet
+smartContract(uint256 const& contractID) noexcept;
+
+Keylet
+contractState(uint256 const& contractID, uint256 const& stateID) noexcept;
 }  // namespace keylet
 
 // Everything below is deprecated and should be removed in favor of keylets:

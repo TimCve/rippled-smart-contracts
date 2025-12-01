@@ -97,6 +97,8 @@ enum class LedgerNameSpace : std::uint16_t {
     DELEGATE = 'E',
     VAULT = 'V',
     MY_CUSTOM_SLE = 'M',
+    SMART_CONTRACT = 'J',
+    CONTRACT_STATE = 'Y',
 
     // No longer used or supported. Left here to reserve the space
     // to avoid accidental reuse.
@@ -585,6 +587,22 @@ Keylet
 myCustomSLE(AccountID const& src, std::uint32_t seq) noexcept
 {
     return {ltMY_CUSTOM_SLE, indexHash(LedgerNameSpace::MY_CUSTOM_SLE, src, seq)};
+}
+
+Keylet
+smartContract(uint256 const& contractID) noexcept
+{
+    return {
+        ltSMART_CONTRACT,
+        indexHash(LedgerNameSpace::SMART_CONTRACT, contractID)};
+}
+
+Keylet
+contractState(uint256 const& contractID, uint256 const& stateID) noexcept
+{
+    return {
+        ltCONTRACT_STATE,
+        indexHash(LedgerNameSpace::CONTRACT_STATE, contractID, stateID)};
 }
 
 /*
