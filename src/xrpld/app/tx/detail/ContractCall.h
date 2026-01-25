@@ -2,14 +2,13 @@
 #define RIPPLE_TX_DETAIL_CONTRACTCALL_H_INCLUDED
 
 #include <xrpld/app/tx/detail/Transactor.h>
-#include <xrpld/app/tx/detail/SmartContractJson.h>
 
 namespace ripple {
 
 class ContractCall : public Transactor
 {
 public:
-    static ConsequencesFactoryType const ConsequencesFactory = Normal;
+    static constexpr ConsequencesFactoryType ConsequencesFactory{Normal};
 
     explicit ContractCall(ApplyContext& ctx) : Transactor(ctx)
     {
@@ -23,10 +22,6 @@ public:
 
     TER
     doApply() override;
-
-private:
-    std::optional<DropContractSpec>
-    fetchDropSpec() const;
 };
 
 }  // namespace ripple

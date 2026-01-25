@@ -17,6 +17,8 @@
 */
 //==============================================================================
 
+#include <wasmtime.h>
+
 #include <xrpld/app/main/Application.h>
 #include <xrpld/app/rdb/Vacuum.h>
 #include <xrpld/core/Config.h>

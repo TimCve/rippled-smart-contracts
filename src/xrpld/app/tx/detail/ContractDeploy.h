@@ -8,7 +8,7 @@ namespace ripple {
 class ContractDeploy : public Transactor
 {
 public:
-    static ConsequencesFactoryType const ConsequencesFactory = Normal;
+    static constexpr ConsequencesFactoryType ConsequencesFactory{Normal};
 
     explicit ContractDeploy(ApplyContext& ctx) : Transactor(ctx)
     {

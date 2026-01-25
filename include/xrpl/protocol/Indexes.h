@@ -351,9 +351,6 @@ Keylet
 permissionedDomain(uint256 const& domainID) noexcept;
 
 Keylet
-myCustomSLE(AccountID const& src, std::uint32_t seq) noexcept;
-
-Keylet
 smartContract(uint256 const& contractID) noexcept;
 
 Keylet

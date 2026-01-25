@@ -96,7 +96,6 @@ enum class LedgerNameSpace : std::uint16_t {
     PERMISSIONED_DOMAIN = 'm',
     DELEGATE = 'E',
     VAULT = 'V',
-    MY_CUSTOM_SLE = 'M',
     SMART_CONTRACT = 'J',
     CONTRACT_STATE = 'Y',
 
@@ -581,12 +580,6 @@ Keylet
 permissionedDomain(uint256 const& domainID) noexcept
 {
     return {ltPERMISSIONED_DOMAIN, domainID};
-}
-
-Keylet
-myCustomSLE(AccountID const& src, std::uint32_t seq) noexcept
-{
-    return {ltMY_CUSTOM_SLE, indexHash(LedgerNameSpace::MY_CUSTOM_SLE, src, seq)};
 }
 
 Keylet
