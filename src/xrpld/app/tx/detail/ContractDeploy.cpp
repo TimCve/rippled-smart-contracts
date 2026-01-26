@@ -58,6 +58,7 @@ ContractDeploy::doApply()
     (*sleContract)[sfAccount] = account_;
     (*sleContract)[sfContractAddress] = contractAddress;
     sleContract->setFieldVL(sfContractCode, ctx_.tx.getFieldVL(sfContractCode));
+    (*sleContract)[sfContractBalance] = STAmount{XRPAmount{0}};
 
     ctx_.view().insert(sleContract);
 

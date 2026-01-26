@@ -355,6 +355,12 @@ smartContract(uint256 const& contractID) noexcept;
 
 Keylet
 contractState(uint256 const& contractID, uint256 const& stateID) noexcept;
+
+Keylet
+contractDir(uint256 const& contractID, AccountID const& owner) noexcept;
+
+Keylet
+smartEscrow(uint256 const& contractID, uint256 const& escrowID) noexcept;
 }  // namespace keylet
 
 // Everything below is deprecated and should be removed in favor of keylets:

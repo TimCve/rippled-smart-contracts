@@ -29,10 +29,13 @@
 #include <xrpl/basics/Log.h>
 #include <xrpl/protocol/Feature.h>
 #include <xrpl/protocol/FeeUnits.h>
+#include <xrpl/protocol/SmartContract.h>
 #include <xrpl/protocol/STArray.h>
 #include <xrpl/protocol/SystemParameters.h>
 #include <xrpl/protocol/TxFormats.h>
 #include <xrpl/protocol/nftPageMask.h>
+
+#include <limits>
 
 namespace ripple {
 
@@ -72,7 +75,26 @@ TransactionFeeCheck::finalize(
 
     // We should never charge more for a transaction than the transaction
     // authorizes. It's possible to charge less in some circumstances.
-    if (fee > tx.getFieldAmount(sfFee).xrp())
+    XRPAmount maxFee = tx.getFieldAmount(sfFee).xrp();
+    if (tx.getTxnType() == ttCONTRACT_CALL)
+    {
+        std::uint64_t budget = kDefaultContractFuelBudget;
+        if (tx.isFieldPresent(sfContractFuelBudget))
+            budget = tx.getFieldU64(sfContractFuelBudget);
+
+        if (budget >
+            static_cast<std::uint64_t>(
+                std::numeric_limits<XRPAmount::value_type>::max()))
+        {
+            JLOG(j.fatal())
+                << "Invariant failed: contract fuel budget exceeds XRP range";
+            return false;
+        }
+
+        maxFee += XRPAmount{static_cast<XRPAmount::value_type>(budget)};
+    }
+
+    if (fee > maxFee)
     {
         JLOG(j.fatal()) << "Invariant failed: fee paid is " << fee.drops()
                         << " exceeds fee specified in transaction.";
@@ -112,7 +134,7 @@ XRPNotCreated::visitEntry(
                 if (isXRP((*before)[sfAmount]))
                     drops_ -= (*before)[sfAmount].xrp().drops();
                 break;
-            case ltCONTRACT_STATE:
+            case ltSMART_ESCROW:
                 if (isXRP((*before)[sfAmount]))
                     drops_ -= (*before)[sfAmount].xrp().drops();
                 break;
@@ -138,7 +160,7 @@ XRPNotCreated::visitEntry(
                 if (!isDelete && isXRP((*after)[sfAmount]))
                     drops_ += (*after)[sfAmount].xrp().drops();
                 break;
-            case ltCONTRACT_STATE:
+            case ltSMART_ESCROW:
                 if (!isDelete && isXRP((*after)[sfAmount]))
                     drops_ += (*after)[sfAmount].xrp().drops();
                 break;
@@ -553,6 +575,8 @@ LedgerEntryTypesMatch::visitEntry(
             case ltVAULT:
             case ltSMART_CONTRACT:
             case ltCONTRACT_STATE:
+            case ltCONTRACT_DIR:
+            case ltSMART_ESCROW:
                 break;
             default:
                 invalidTypeAdded_ = true;

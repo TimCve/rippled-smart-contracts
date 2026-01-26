@@ -25,6 +25,7 @@
 #include <xrpl/protocol/STLedgerEntry.h>
 #include <xrpl/protocol/TER.h>
 
+#include <cstdint>
 #include <boost/container/flat_set.hpp>
 
 #include <optional>
@@ -154,6 +155,27 @@ public:
         return static_cast<bool>(mParentBatchId);
     }
 
+    void
+    setContractFuelUsed(std::uint64_t drops)
+    {
+        mContractFuelUsed = drops;
+    }
+
+    bool
+    hasContractFuelUsed() const
+    {
+        return static_cast<bool>(mContractFuelUsed);
+    }
+
+    std::uint64_t
+    getContractFuelUsed() const
+    {
+        XRPL_ASSERT(
+            hasContractFuelUsed(),
+            "ripple::TxMeta::getContractFuelUsed : non-null fuel used");
+        return *mContractFuelUsed;
+    }
+
 private:
     uint256 mTransactionID;
     std::uint32_t mLedger;
@@ -162,6 +184,7 @@ private:
 
     std::optional<STAmount> mDelivered;
     std::optional<uint256> mParentBatchId;
+    std::optional<std::uint64_t> mContractFuelUsed;
 
     STArray mNodes;
 };

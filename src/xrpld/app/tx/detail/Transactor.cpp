@@ -1015,6 +1015,7 @@ Transactor::reset(XRPAmount fee)
         return {tefINTERNAL, beast::zero};  // LCOV_EXCL_LINE
 
     auto const balance = payerSle->getFieldAmount(sfBalance).xrp();
+    auto const fuelCharge = ctx_.fuelCharge();
 
     // balance should have already been checked in checkFee / preFlight.
     XRPL_ASSERT(
@@ -1034,6 +1035,18 @@ Transactor::reset(XRPAmount fee)
     // then the ledger is corrupted.  Rather than make things worse we
     // reject the transaction.
     payerSle->setFieldAmount(sfBalance, balance - fee);
+
+    if (fuelCharge != beast::zero)
+    {
+        auto const callerBalance = txnAcct->getFieldAmount(sfBalance).xrp();
+        if (callerBalance < fuelCharge)
+            return {tefINTERNAL, beast::zero};
+        XRPL_ASSERT(
+            callerBalance >= fuelCharge,
+            "ripple::Transactor::reset : caller balance covers fuel");
+
+        txnAcct->setFieldAmount(sfBalance, callerBalance - fuelCharge);
+    }
     TER const ter{consumeSeqProxy(txnAcct)};
     XRPL_ASSERT(
         isTesSuccess(ter), "ripple::Transactor::reset : result is tesSUCCESS");
@@ -1107,6 +1120,7 @@ Transactor::operator()()
 
     bool applied = isTesSuccess(result);
     auto fee = ctx_.tx.getFieldAmount(sfFee).xrp();
+    auto const fuelCharge = ctx_.fuelCharge();
 
     if (ctx_.size() > oversizeMetaDataCap)
         result = tecOVERSIZE;
@@ -1219,7 +1233,8 @@ Transactor::operator()()
     {
         // Check invariants: if `tecINVARIANT_FAILED` is not returned, we can
         // proceed to apply the tx
-        result = ctx_.checkInvariants(result, fee);
+        XRPAmount totalFee = fee + fuelCharge;
+        result = ctx_.checkInvariants(result, totalFee);
 
         if (result == tecINVARIANT_FAILED)
         {
@@ -1234,7 +1249,10 @@ Transactor::operator()()
             // Check invariants again to ensure the fee claiming doesn't
             // violate invariants.
             if (isTesSuccess(result) || isTecClaim(result))
-                result = ctx_.checkInvariants(result, fee);
+            {
+                totalFee = fee + fuelCharge;
+                result = ctx_.checkInvariants(result, totalFee);
+            }
         }
 
         // We ran through the invariant checker, which can, in some cases,
@@ -1252,15 +1270,16 @@ Transactor::operator()()
         // The transactor and invariant checkers guarantee that this will
         // *never* trigger but if it, somehow, happens, don't allow a tx
         // that charges a negative fee.
-        if (fee < beast::zero)
+        auto const totalFee = fee + fuelCharge;
+        if (totalFee < beast::zero)
             Throw<std::logic_error>("fee charged is negative!");
 
         // Charge whatever fee they specified. The fee has already been
         // deducted from the balance of the account that issued the
         // transaction. We just need to account for it in the ledger
         // header.
-        if (!view().open() && fee != beast::zero)
-            ctx_.destroyXRP(fee);
+        if (!view().open() && totalFee != beast::zero)
+            ctx_.destroyXRP(totalFee);
 
         // Once we call apply, we will no longer be able to look at view()
         metadata = ctx_.apply(result);

@@ -26,6 +26,8 @@
 #include <xrpl/protocol/STAmount.h>
 #include <xrpl/protocol/TER.h>
 
+#include <cstdint>
+
 namespace ripple {
 
 /** Editable, discardable view that can build metadata for one tx.
@@ -59,6 +61,7 @@ public:
         STTx const& tx,
         TER ter,
         std::optional<uint256> parentBatchId,
+        std::optional<std::uint64_t> const& fuelUsed,
         bool isDryRun,
         beast::Journal j);
 

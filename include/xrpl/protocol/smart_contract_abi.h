@@ -28,14 +28,61 @@ typedef struct PACKED
 
 #define ADDR_SIZE 20u
 
-int32_t
-get_caller(int32_t a_ptr) WASM_IMPORT(SC_HOST_MOD, "get_caller");
+typedef struct PACKED
+{
+    uint8_t bytes[32];
+} id256_t;
+
+#define ID256_SIZE 32u
 
 int32_t
-get_owner(int32_t a_ptr) WASM_IMPORT(SC_HOST_MOD, "get_owner");
+getCallerAddr(int32_t a_ptr) WASM_IMPORT(SC_HOST_MOD, "getCallerAddr");
 
 int32_t
-pay(int32_t a_ptr, int64_t amount) WASM_IMPORT(SC_HOST_MOD, "pay");
+getOwnerAddr(int32_t a_ptr) WASM_IMPORT(SC_HOST_MOD, "getOwnerAddr");
+
+int32_t
+escrowCallerXRP(int32_t id_ptr, int64_t amount)
+    WASM_IMPORT(SC_HOST_MOD, "escrowCallerXRP");
+
+int32_t
+escrowOwnerXRP(int32_t id_ptr, int64_t amount)
+    WASM_IMPORT(SC_HOST_MOD, "escrowOwnerXRP");
+
+int32_t
+releaseEscrowedXRP(int32_t id_ptr, int32_t dest_ptr)
+    WASM_IMPORT(SC_HOST_MOD, "releaseEscrowedXRP");
+
+int32_t
+createState(int32_t data_ptr, int32_t data_len, int32_t id_ptr)
+    WASM_IMPORT(SC_HOST_MOD, "createState");
+
+int32_t
+getStateSize(int32_t id_ptr) WASM_IMPORT(SC_HOST_MOD, "getStateSize");
+
+int32_t
+getState(int32_t id_ptr, int32_t out_ptr, int32_t out_len)
+    WASM_IMPORT(SC_HOST_MOD, "getState");
+
+int32_t
+deleteState(int32_t id_ptr) WASM_IMPORT(SC_HOST_MOD, "deleteState");
+
+int32_t
+setState(int32_t id_ptr, int32_t data_ptr, int32_t data_len)
+    WASM_IMPORT(SC_HOST_MOD, "setState");
+
+int32_t
+getParamsSize(void) WASM_IMPORT(SC_HOST_MOD, "getParamsSize");
+
+int32_t
+getParams(int32_t out_ptr, int32_t out_len)
+    WASM_IMPORT(SC_HOST_MOD, "getParams");
+
+int32_t
+paramsPassed(void) WASM_IMPORT(SC_HOST_MOD, "paramsPassed");
+
+int32_t
+optPassed(void) WASM_IMPORT(SC_HOST_MOD, "optPassed");
 
 #ifdef __cplusplus
 }

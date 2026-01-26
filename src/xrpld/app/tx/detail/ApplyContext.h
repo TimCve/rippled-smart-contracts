@@ -28,6 +28,7 @@
 #include <xrpl/protocol/STTx.h>
 #include <xrpl/protocol/XRPAmount.h>
 
+#include <cstdint>
 #include <optional>
 
 namespace ripple {
@@ -99,6 +100,35 @@ public:
         return flags_;
     }
 
+    void
+    setFuelUsed(std::uint64_t drops)
+    {
+        fuelUsedDrops_ = drops;
+    }
+
+    bool
+    hasFuelUsed() const
+    {
+        return fuelUsedDrops_.has_value();
+    }
+
+    std::uint64_t
+    fuelUsedDrops() const
+    {
+        XRPL_ASSERT(
+            hasFuelUsed(),
+            "ripple::ApplyContext::fuelUsedDrops : has fuel used");
+        return *fuelUsedDrops_;
+    }
+
+    XRPAmount
+    fuelCharge() const
+    {
+        return hasFuelUsed()
+            ? XRPAmount{static_cast<XRPAmount::value_type>(*fuelUsedDrops_)}
+            : beast::zero;
+    }
+
     /** Sets the DeliveredAmount field in the metadata */
     void
     deliver(STAmount const& amount)
@@ -157,6 +187,8 @@ private:
 
     // The ID of the batch transaction we are executing under, if seated.
     std::optional<uint256 const> parentBatchId_;
+
+    std::optional<std::uint64_t> fuelUsedDrops_;
 };
 
 }  // namespace ripple

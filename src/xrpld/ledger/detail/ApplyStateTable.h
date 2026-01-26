@@ -29,6 +29,7 @@
 #include <xrpl/protocol/TxMeta.h>
 #include <xrpl/protocol/XRPAmount.h>
 
+#include <cstdint>
 #include <memory>
 
 namespace ripple {
@@ -73,6 +74,7 @@ public:
         TER ter,
         std::optional<STAmount> const& deliver,
         std::optional<uint256 const> const& parentBatchId,
+        std::optional<std::uint64_t> const& fuelUsed,
         bool isDryRun,
         beast::Journal j);
 

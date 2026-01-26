@@ -510,6 +510,7 @@ LEDGER_ENTRY(ltSMART_CONTRACT, 0x0085, SmartContract, smart_contract, ({
     {sfContractAddress,      soeREQUIRED},
     {sfAccount,              soeREQUIRED},
     {sfContractCode,         soeREQUIRED},
+    {sfContractBalance,      soeREQUIRED},
     {sfOwnerNode,            soeREQUIRED},
     {sfPreviousTxnID,        soeREQUIRED},
     {sfPreviousTxnLgrSeq,    soeREQUIRED},
@@ -523,6 +524,32 @@ LEDGER_ENTRY(ltCONTRACT_STATE, 0x0086, ContractState, contract_state, ({
     {sfAccount,              soeREQUIRED},
     {sfContractAddress,      soeREQUIRED},
     {sfContractStateData,    soeREQUIRED},
+    {sfOwnerNode,            soeREQUIRED},
+    {sfPreviousTxnID,        soeREQUIRED},
+    {sfPreviousTxnLgrSeq,    soeREQUIRED},
+}))
+
+/** Smart contract per-account directory.
+    \sa keylet::contractDir
+ */
+LEDGER_ENTRY(ltCONTRACT_DIR, 0x0087, ContractDir, contract_dir, ({
+    {sfContractAddress,      soeREQUIRED},
+    {sfAccount,              soeREQUIRED},
+    {sfContractDirCount,     soeREQUIRED},
+    {sfContractDirNextIndex, soeREQUIRED},
+    {sfOwnerNode,            soeREQUIRED},
+    {sfPreviousTxnID,        soeREQUIRED},
+    {sfPreviousTxnLgrSeq,    soeREQUIRED},
+}))
+
+/** Smart escrow entry for contract-held XRP.
+    \sa keylet::smartEscrow
+ */
+LEDGER_ENTRY(ltSMART_ESCROW, 0x0088, SmartEscrow, smart_escrow, ({
+    {sfSmartEscrowID,        soeREQUIRED},
+    {sfContractAddress,      soeREQUIRED},
+    {sfAccount,              soeREQUIRED},
+    {sfAmount,               soeREQUIRED},
     {sfOwnerNode,            soeREQUIRED},
     {sfPreviousTxnID,        soeREQUIRED},
     {sfPreviousTxnLgrSeq,    soeREQUIRED},

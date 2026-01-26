@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 /*
     This file is part of rippled: https://github.com/ripple/rippled
-    Copyright (c) 2012, 2013 Ripple Labs Inc.
+    Copyright (c) 2026 Ripple Labs Inc.
 
     Permission to use, copy, modify, and/or distribute this software for any
     purpose  with  or without fee is hereby granted, provided that the above
@@ -17,45 +17,16 @@
 */
 //==============================================================================
 
-#include <xrpld/ledger/ApplyViewImpl.h>
+#ifndef RIPPLE_PROTOCOL_SMARTCONTRACT_H_INCLUDED
+#define RIPPLE_PROTOCOL_SMARTCONTRACT_H_INCLUDED
+
+#include <cstdint>
 
 namespace ripple {
 
-ApplyViewImpl::ApplyViewImpl(ReadView const* base, ApplyFlags flags)
-    : ApplyViewBase(base, flags)
-{
-}
-
-std::optional<TxMeta>
-ApplyViewImpl::apply(
-    OpenView& to,
-    STTx const& tx,
-    TER ter,
-    std::optional<uint256> parentBatchId,
-    std::optional<std::uint64_t> const& fuelUsed,
-    bool isDryRun,
-    beast::Journal j)
-{
-    return items_.apply(
-        to, tx, ter, deliver_, parentBatchId, fuelUsed, isDryRun, j);
-}
-
-std::size_t
-ApplyViewImpl::size()
-{
-    return items_.size();
-}
-
-void
-ApplyViewImpl::visit(
-    OpenView& to,
-    std::function<void(
-        uint256 const& key,
-        bool isDelete,
-        std::shared_ptr<SLE const> const& before,
-        std::shared_ptr<SLE const> const& after)> const& func)
-{
-    items_.visit(to, func);
-}
+// Default max fuel budget for ContractCall when not specified on the tx.
+constexpr std::uint64_t kDefaultContractFuelBudget = 50'000;
 
 }  // namespace ripple
+
+#endif

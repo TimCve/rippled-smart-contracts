@@ -8,7 +8,7 @@ namespace ripple {
 class ContractCall : public Transactor
 {
 public:
-    static constexpr ConsequencesFactoryType ConsequencesFactory{Normal};
+    static constexpr ConsequencesFactoryType ConsequencesFactory{Custom};
 
     explicit ContractCall(ApplyContext& ctx) : Transactor(ctx)
     {
@@ -16,6 +16,9 @@ public:
 
     static NotTEC
     preflight(PreflightContext const& ctx);
+
+    static TxConsequences
+    makeTxConsequences(PreflightContext const& ctx);
 
     static TER
     preclaim(PreclaimContext const& ctx);
