@@ -114,6 +114,17 @@ useFuel(wasmtime_context_t* ctx, uint64_t amount, beast::Journal j)
     return nullptr;
 }
 
+wasm_engine_t*
+getEngine()
+{
+    static wasm_engine_t* engine = []() {
+        wasm_config_t* config = wasm_config_new();
+        wasmtime_config_consume_fuel_set(config, true);
+        return wasm_engine_new_with_config(config);
+    }();
+    return engine;
+}
+
 bool
 fuelBudgetToXRP(std::uint64_t budget, XRPAmount& out)
 {
@@ -1560,10 +1571,7 @@ ContractCall::doApply()
         st.optPassed = true;
     }
 
-    wasm_config_t* config = wasm_config_new();
-    wasmtime_config_consume_fuel_set(config, true);
-
-    wasm_engine_t* engine = wasm_engine_new_with_config(config);
+    wasm_engine_t* engine = getEngine();
     wasmtime_store_t* store = wasmtime_store_new(engine, &st, nullptr);
     wasmtime_context_t* wctx = wasmtime_store_context(store);
     st.ctx = wctx;
@@ -1579,8 +1587,6 @@ ContractCall::doApply()
             wasmtime_module_delete(module);
         if (store)
             wasmtime_store_delete(store);
-        if (engine)
-            wasm_engine_delete(engine);
     };
 
     auto recordFuel = [&](std::uint64_t& used) -> bool {
