@@ -1,7 +1,4 @@
 #include <xrpld/app/tx/detail/ContractCall.h>
-
-#include <wasmtime.h>
-
 #include <xrpl/basics/Blob.h>
 #include <xrpl/basics/Log.h>
 #include <xrpl/beast/utility/Zero.h>
@@ -15,7 +12,7 @@
 #include <xrpl/protocol/digest.h>
 #include <xrpl/protocol/smart_contract_abi.h>
 #include <xrpld/ledger/View.h>
-
+#include <wasmtime.h>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -23,6 +20,7 @@
 namespace ripple {
 namespace {
 
+// TODO: check if necessary
 static_assert(sizeof(addr_t) == ADDR_SIZE, "addr_t size mismatch");
 static_assert(sizeof(id256_t) == ID256_SIZE, "id256_t size mismatch");
 
@@ -88,6 +86,17 @@ policyCheck(bool cond, beast::Journal j, char const* msg)
     return false;
 }
 
+wasm_engine_t*
+getEngine()
+{
+    static wasm_engine_t* engine = []() {
+        wasm_config_t* config = wasm_config_new();
+        wasmtime_config_consume_fuel_set(config, true);
+        return wasm_engine_new_with_config(config);
+    }();
+    return engine;
+}
+
 wasm_trap_t*
 useFuel(wasmtime_context_t* ctx, uint64_t amount, beast::Journal j)
 {
@@ -112,17 +121,6 @@ useFuel(wasmtime_context_t* ctx, uint64_t amount, beast::Journal j)
     }
 
     return nullptr;
-}
-
-wasm_engine_t*
-getEngine()
-{
-    static wasm_engine_t* engine = []() {
-        wasm_config_t* config = wasm_config_new();
-        wasmtime_config_consume_fuel_set(config, true);
-        return wasm_engine_new_with_config(config);
-    }();
-    return engine;
 }
 
 bool
@@ -166,29 +164,28 @@ struct HostState
     Blob params;
     bool paramsPassed = false;
     std::uint64_t opt = 0;
-    bool optPassed = false;
     TER callbackTer = tesSUCCESS;
 };
 
-uint8_t*
+uint8_t* // get pointer to smart contract memory
 memData(HostState* st)
 {
     return wasmtime_memory_data(st->ctx, &st->memory);
 }
 
-std::size_t
+std::size_t // get size of smart contract memory
 memSize(HostState* st)
 {
     return wasmtime_memory_data_size(st->ctx, &st->memory);
 }
 
-bool
+bool // is memory slice in smart contract memory within bounds?
 memSliceOk(HostState* st, uint32_t ptr, uint32_t len)
 {
     return static_cast<uint64_t>(ptr) + len <= memSize(st);
 }
 
-bool
+bool 
 readId256(HostState* st, uint32_t ptr, uint256& out)
 {
     if (!memSliceOk(st, ptr, ID256_SIZE))
@@ -208,7 +205,7 @@ writeId256(HostState* st, uint32_t ptr, uint256 const& id)
     return true;
 }
 
-TER
+TER // enough reserve for additional <add> SLEs?
 checkReserve(
     HostState* st,
     AccountID const& owner,
@@ -235,7 +232,7 @@ checkReserve(
     return tesSUCCESS;
 }
 
-TER
+TER // add SLE to owner dir
 addToOwnerDir(
     HostState* st,
     AccountID const& owner,
@@ -254,7 +251,7 @@ addToOwnerDir(
     return tesSUCCESS;
 }
 
-TER
+TER // remove SLE from owner dir
 removeFromOwnerDir(
     HostState* st,
     AccountID const& owner,
@@ -899,65 +896,6 @@ cb_create_state(
 }
 
 wasm_trap_t*
-cb_get_state_size(
-    void* env,
-    wasmtime_caller_t* caller,
-    wasmtime_val_t const* args,
-    std::size_t nargs,
-    wasmtime_val_t* results,
-    std::size_t nresults)
-{
-    auto* st = reinterpret_cast<HostState*>(env);
-    if (nargs != 1 || args[0].kind != WASMTIME_I32)
-        return makeTrap("getStateSize signature mismatch");
-    if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("getStateSize returns i32");
-    if (!st->have_memory)
-        return makeTrap("guest memory not available");
-
-    uint32_t id_ptr = static_cast<uint32_t>(args[0].of.i32);
-
-    if (auto trap = useFuel(wasmtime_caller_context(caller), 200, st->j);
-        trap)
-    {
-        return trap;
-    }
-
-    if (st->callbackTer != tesSUCCESS)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-
-    uint256 stateID;
-    if (!readId256(st, id_ptr, stateID))
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-
-    auto const stateKeylet =
-        keylet::contractState(st->contractAddress, stateID);
-    auto stateSle = st->view->read(stateKeylet);
-    if (!stateSle)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-
-    auto const& data = stateSle->getFieldVL(sfContractStateData);
-    if (data.size() > static_cast<std::size_t>(
-            std::numeric_limits<std::int32_t>::max()))
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-
-    results[0].of.i32 = static_cast<std::int32_t>(data.size());
-    return nullptr;
-}
-
-wasm_trap_t*
 cb_get_state(
     void* env,
     wasmtime_caller_t* caller,
@@ -1190,44 +1128,6 @@ cb_delete_state(
 }
 
 wasm_trap_t*
-cb_get_params_size(
-    void* env,
-    wasmtime_caller_t* caller,
-    wasmtime_val_t const* args,
-    std::size_t nargs,
-    wasmtime_val_t* results,
-    std::size_t nresults)
-{
-    auto* st = reinterpret_cast<HostState*>(env);
-    if (nargs != 0)
-        return makeTrap("getParamsSize signature mismatch");
-    if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("getParamsSize returns i32");
-
-    if (auto trap = useFuel(wasmtime_caller_context(caller), 100, st->j);
-        trap)
-    {
-        return trap;
-    }
-
-    if (!st->paramsPassed)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-
-    if (st->params.size() >
-        static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-
-    results[0].of.i32 = static_cast<std::int32_t>(st->params.size());
-    return nullptr;
-}
-
-wasm_trap_t*
 cb_get_params(
     void* env,
     wasmtime_caller_t* caller,
@@ -1302,28 +1202,6 @@ cb_params_passed(
     return nullptr;
 }
 
-wasm_trap_t*
-cb_opt_passed(
-    void* env,
-    wasmtime_caller_t* caller,
-    wasmtime_val_t const* args,
-    std::size_t nargs,
-    wasmtime_val_t* results,
-    std::size_t nresults)
-{
-    auto* st = reinterpret_cast<HostState*>(env);
-    if (nargs != 0)
-        return makeTrap("optPassed signature mismatch");
-    if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("optPassed returns i32");
-
-    if (auto trap = useFuel(wasmtime_caller_context(caller), 50, st->j); trap)
-        return trap;
-
-    results[0].of.i32 = st->optPassed ? 1 : 0;
-    return nullptr;
-}
-
 bool
 enforceImportPolicy(wasmtime_module_t const* module, beast::Journal j)
 {
@@ -1348,11 +1226,9 @@ enforceImportPolicy(wasmtime_module_t const* module, beast::Journal j)
             nameEq(name, "getCallerAddr") || nameEq(name, "getOwnerAddr") ||
             nameEq(name, "escrowCallerXRP") || nameEq(name, "escrowOwnerXRP") ||
             nameEq(name, "releaseEscrowedXRP") || nameEq(name, "createState") ||
-            nameEq(name, "getStateSize") || nameEq(name, "getState") ||
-            nameEq(name, "deleteState") || nameEq(name, "setState") ||
-            nameEq(name, "getParamsSize") ||
-            nameEq(name, "getParams") || nameEq(name, "paramsPassed") ||
-            nameEq(name, "optPassed");
+            nameEq(name, "getState") || nameEq(name, "deleteState") || 
+            nameEq(name, "setState") || nameEq(name, "getParams") || 
+            nameEq(name, "paramsPassed");
         ok = policyCheck(allowed, j, "import name not allowed");
         if (!ok)
             break;
@@ -1568,7 +1444,6 @@ ContractCall::doApply()
     if (ctx_.tx.isFieldPresent(sfContractOpt))
     {
         st.opt = ctx_.tx.getFieldU64(sfContractOpt);
-        st.optPassed = true;
     }
 
     wasm_engine_t* engine = getEngine();
@@ -1772,23 +1647,6 @@ ContractCall::doApply()
     }
 
     {
-        wasm_valtype_t* p[1] = {wasm_valtype_new_i32()};
-        wasm_valtype_t* r[1] = {wasm_valtype_new_i32()};
-        wasm_valtype_vec_t params;
-        wasm_valtype_vec_t results;
-        wasm_valtype_vec_new(&params, 1, p);
-        wasm_valtype_vec_new(&results, 1, r);
-        wasm_functype_t* ty = wasm_functype_new(&params, &results);
-
-        wasmtime_func_t f = makeFunc(wctx, ty, cb_get_state_size, &st);
-        wasm_functype_delete(ty);
-        if (!defineFunc(linker, wctx, SC_HOST_MOD, "getStateSize", f, j_))
-        {
-            return finish(tecFAILED_PROCESSING);
-        }
-    }
-
-    {
         wasm_valtype_t* p[3] = {
             wasm_valtype_new_i32(),
             wasm_valtype_new_i32(),
@@ -1846,22 +1704,6 @@ ContractCall::doApply()
     }
 
     {
-        wasm_valtype_t* r[1] = {wasm_valtype_new_i32()};
-        wasm_valtype_vec_t params;
-        wasm_valtype_vec_t results;
-        wasm_valtype_vec_new(&params, 0, nullptr);
-        wasm_valtype_vec_new(&results, 1, r);
-        wasm_functype_t* ty = wasm_functype_new(&params, &results);
-
-        wasmtime_func_t f = makeFunc(wctx, ty, cb_get_params_size, &st);
-        wasm_functype_delete(ty);
-        if (!defineFunc(linker, wctx, SC_HOST_MOD, "getParamsSize", f, j_))
-        {
-            return finish(tecFAILED_PROCESSING);
-        }
-    }
-
-    {
         wasm_valtype_t* p[2] = {wasm_valtype_new_i32(), wasm_valtype_new_i32()};
         wasm_valtype_t* r[1] = {wasm_valtype_new_i32()};
         wasm_valtype_vec_t params;
@@ -1889,22 +1731,6 @@ ContractCall::doApply()
         wasmtime_func_t f = makeFunc(wctx, ty, cb_params_passed, &st);
         wasm_functype_delete(ty);
         if (!defineFunc(linker, wctx, SC_HOST_MOD, "paramsPassed", f, j_))
-        {
-            return finish(tecFAILED_PROCESSING);
-        }
-    }
-
-    {
-        wasm_valtype_t* r[1] = {wasm_valtype_new_i32()};
-        wasm_valtype_vec_t params;
-        wasm_valtype_vec_t results;
-        wasm_valtype_vec_new(&params, 0, nullptr);
-        wasm_valtype_vec_new(&results, 1, r);
-        wasm_functype_t* ty = wasm_functype_new(&params, &results);
-
-        wasmtime_func_t f = makeFunc(wctx, ty, cb_opt_passed, &st);
-        wasm_functype_delete(ty);
-        if (!defineFunc(linker, wctx, SC_HOST_MOD, "optPassed", f, j_))
         {
             return finish(tecFAILED_PROCESSING);
         }
