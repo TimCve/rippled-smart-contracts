@@ -57,6 +57,7 @@ int32_t
 createState(int32_t data_ptr, int32_t data_len, int32_t id_ptr)
     WASM_IMPORT(SC_HOST_MOD, "createState");
 
+// TODO: REMOVE
 int32_t
 getStateSize(int32_t id_ptr) WASM_IMPORT(SC_HOST_MOD, "getStateSize");
 
@@ -71,6 +72,7 @@ int32_t
 setState(int32_t id_ptr, int32_t data_ptr, int32_t data_len)
     WASM_IMPORT(SC_HOST_MOD, "setState");
 
+// TODO: REMOVE
 int32_t
 getParamsSize(void) WASM_IMPORT(SC_HOST_MOD, "getParamsSize");
 
@@ -81,6 +83,8 @@ getParams(int32_t out_ptr, int32_t out_len)
 int32_t
 paramsPassed(void) WASM_IMPORT(SC_HOST_MOD, "paramsPassed");
 
+
+// TODO: REMOVE
 int32_t
 optPassed(void) WASM_IMPORT(SC_HOST_MOD, "optPassed");
 

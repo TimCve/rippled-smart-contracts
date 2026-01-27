@@ -1,19 +1,25 @@
-#include <stdint.h>
 #include "../include/xrpl/protocol/smart_contract_abi.h"
+#include <stdint.h>
 
-static void* sc_memcpy(void* dst, const void* src, uint32_t n) {
-    uint8_t* d = (uint8_t*)dst;
-    const uint8_t* s = (const uint8_t*)src;
-    for (uint32_t i = 0; i < n; ++i) d[i] = s[i];
-    return dst;
-}
+typedef struct PACKED
+{
+    uint64_t amount;
+    addr_t recipient;
+} params1_t;
 
-static void sc_memset(void* dst, uint8_t v, uint32_t n) {
-    uint8_t* d = (uint8_t*)dst;
-    for (uint32_t i = 0; i < n; ++i) d[i] = v;
-}
+typedef struct PACKED
+{
+    id256_t state_id;
+} params2_t;
 
-static int sc_memeq(const void* a, const void* b, uint32_t n) {
+typedef struct PACKED
+{
+    addr_t recipient;
+    id256_t escrow_id;
+} state_t;
+
+// TODO: move into ABI and include as standard
+static int memeq(const void* a, const void* b, uint32_t n) {
     const uint8_t* p = (const uint8_t*)a;
     const uint8_t* q = (const uint8_t*)b;
     for (uint32_t i = 0; i < n; ++i) {
@@ -22,84 +28,48 @@ static int sc_memeq(const void* a, const void* b, uint32_t n) {
     return 1;
 }
 
-static uint64_t read_u64_le(const uint8_t* p) {
-    uint64_t v = 0;
-    for (int i = 0; i < 8; ++i) v |= ((uint64_t)p[i]) << (8 * i);
-    return v;
-}
-
-typedef struct __attribute__((packed)) {
-    uint64_t amount;
-    addr_t recipient;
-    id256_t escrow_id;
-} escrow_state_t;
-
 __attribute__((export_name("entrypoint")))
 int32_t entrypoint(int64_t opt)
 {
-    // opt: 1=create, 2=claim
+    if (!paramsPassed()) return -1;
+
+    // opt = 1 : create
     if (opt == 1) {
-        if (!paramsPassed()) return -1;
+        params1_t params;
+        int32_t got = getParams((int32_t)&params, (int32_t)sizeof(params1_t));
+        if(got != (int32_t)sizeof(params1_t)) return -2;
+        
+        state_t state;
+        state.recipient = params.recipient;
+        if(escrowCallerXRP((int32_t)&state.escrow_id, params.amount) != 0)
+            return -3;
 
-        uint8_t params[8 + ADDR_SIZE];
-        int32_t got = getParams((int32_t)params, (int32_t)sizeof(params));
-        if (got != (int32_t)sizeof(params)) return -2;
-
-        uint64_t amount = read_u64_le(params);
-        if (amount == 0) return -3;
-
-        addr_t recipient;
-        sc_memcpy(&recipient, params + 8, ADDR_SIZE);
-
-        // lock funds from caller
-        id256_t escrow_id;
-        if (escrowCallerXRP((int32_t)&escrow_id, (int64_t)amount) != 0)
+        id256_t state_id;
+        if(createState((int32_t)&state, (int32_t)sizeof(state_t), (int32_t)&state_id) != 0)
             return -4;
 
-        // store state with escrow reference + recipient
-        escrow_state_t state;
-        sc_memset(&state, 0, (uint32_t)sizeof(state));
-        state.amount = amount;
-        state.recipient = recipient;
-        state.escrow_id = escrow_id;
+    // opt = 2 : claim
+    } else if (opt == 2) {
+        params2_t params;
+        int32_t got = getParams((int32_t)&params, (int32_t)sizeof(params2_t));
+        if(got != (int32_t)sizeof(params2_t)) return -5;
 
-        id256_t state_id;
-        if (createState((int32_t)&state, (int32_t)sizeof(state),
-                        (int32_t)&state_id) != 0)
-            return -5;
-
-        return 0;
-    }
-
-    if (opt == 2) {
-        if (!paramsPassed()) return -10;
-
-        id256_t state_id;
-        int32_t got = getParams((int32_t)&state_id, ID256_SIZE);
-        if (got != (int32_t)ID256_SIZE) return -11;
-
-        escrow_state_t state;
-        int32_t sz = getStateSize((int32_t)&state_id);
-        if (sz != (int32_t)sizeof(state)) return -12;
-
-        if (getState((int32_t)&state_id, (int32_t)&state, sz) != sz)
-            return -13;
-
+        state_t state;
+        int32_t sz = getState((int32_t)&params.state_id, (int32_t)&state, sizeof(state_t));
+        if(sz != (int32_t)sizeof(state_t)) return -6;
+        
         addr_t caller;
-        if (getCallerAddr((int32_t)&caller) != 0) return -14;
+        if(getCallerAddr((int32_t)&caller) != 0)
+            return -7;
 
-        if (!sc_memeq(&caller, &state.recipient, ADDR_SIZE)) return -15;
+        if(memeq(&caller, &state.recipient, ADDR_SIZE)) {
+            if(releaseEscrowedXRP((int32_t)&state.escrow_id, (int32_t)&caller) != 0)
+                return -9;
+            
+            if(deleteState((int32_t)&params.state_id) != 0)
+                return -10;
+        } else return -8;
+    } else return -11;
 
-        // release escrow to caller
-        if (releaseEscrowedXRP((int32_t)&state.escrow_id,
-                                 (int32_t)&caller) != 0)
-            return -16;
-
-        // delete state
-        if (deleteState((int32_t)&state_id) != 0) return -17;
-
-        return 0;
-    }
-
-    return -100;
+    return 0;
 }
