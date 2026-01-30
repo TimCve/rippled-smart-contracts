@@ -510,6 +510,7 @@ LEDGER_ENTRY(ltSMART_CONTRACT, 0x0085, SmartContract, smart_contract, ({
     {sfContractAddress,      soeREQUIRED},
     {sfAccount,              soeREQUIRED},
     {sfContractCode,         soeREQUIRED},
+    {sfContractCost,         soeREQUIRED},
     {sfContractBalance,      soeREQUIRED},
     {sfOwnerNode,            soeREQUIRED},
     {sfPreviousTxnID,        soeREQUIRED},

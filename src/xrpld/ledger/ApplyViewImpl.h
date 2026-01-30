@@ -61,7 +61,6 @@ public:
         STTx const& tx,
         TER ter,
         std::optional<uint256> parentBatchId,
-        std::optional<std::uint64_t> const& fuelUsed,
         bool isDryRun,
         beast::Journal j);
 

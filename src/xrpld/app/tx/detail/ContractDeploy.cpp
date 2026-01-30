@@ -8,6 +8,8 @@
 #include <xrpld/ledger/View.h>
 #include <xrpl/basics/Log.h>
 
+#include <limits>
+
 namespace ripple {
 
 NotTEC
@@ -36,6 +38,31 @@ ContractDeploy::preclaim(PreclaimContext const& ctx)
     return tesSUCCESS;
 }
 
+// 1 drop of XRP per byte of code
+XRPAmount
+ContractDeploy::calculateBaseFee(ReadView const& view, STTx const& tx)
+{
+    XRPAmount const baseFee = Transactor::calculateBaseFee(view, tx);
+    std::size_t const codeSize =
+        tx.isFieldPresent(sfContractCode) ? tx.getFieldVL(sfContractCode).size()
+                                          : 0;
+
+    auto const maxDrops =
+        static_cast<std::uint64_t>(
+            std::numeric_limits<XRPAmount::value_type>::max());
+    auto const baseDrops = static_cast<std::uint64_t>(baseFee.drops());
+    auto const codeDrops = static_cast<std::uint64_t>(codeSize);
+
+    if (codeDrops > maxDrops - baseDrops)
+    {
+        return XRPAmount{
+            static_cast<XRPAmount::value_type>(maxDrops)};
+    }
+
+    return XRPAmount{
+        static_cast<XRPAmount::value_type>(baseDrops + codeDrops)};
+}
+
 TER
 ContractDeploy::doApply()
 {
@@ -57,7 +84,10 @@ ContractDeploy::doApply()
     auto sleContract = std::make_shared<SLE>(contractKeylet);
     (*sleContract)[sfAccount] = account_;
     (*sleContract)[sfContractAddress] = contractAddress;
-    sleContract->setFieldVL(sfContractCode, ctx_.tx.getFieldVL(sfContractCode));
+    auto const& code = ctx_.tx.getFieldVL(sfContractCode);
+    sleContract->setFieldVL(sfContractCode, code);
+    sleContract->setFieldU64(
+        sfContractCost, static_cast<std::uint64_t>(code.size()));
     (*sleContract)[sfContractBalance] = STAmount{XRPAmount{0}};
 
     ctx_.view().insert(sleContract);

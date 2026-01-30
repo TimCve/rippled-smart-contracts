@@ -60,8 +60,6 @@ TxMeta::TxMeta(
     if (obj.isFieldPresent(sfParentBatchID))
         setParentBatchId(obj.getFieldH256(sfParentBatchID));
 
-    if (obj.isFieldPresent(sfContractFuelUsed))
-        setContractFuelUsed(obj.getFieldU64(sfContractFuelUsed));
 }
 
 TxMeta::TxMeta(uint256 const& txid, std::uint32_t ledger, STObject const& obj)
@@ -86,8 +84,6 @@ TxMeta::TxMeta(uint256 const& txid, std::uint32_t ledger, STObject const& obj)
     if (obj.isFieldPresent(sfParentBatchID))
         setParentBatchId(obj.getFieldH256(sfParentBatchID));
 
-    if (obj.isFieldPresent(sfContractFuelUsed))
-        setContractFuelUsed(obj.getFieldU64(sfContractFuelUsed));
 }
 
 TxMeta::TxMeta(uint256 const& txid, std::uint32_t ledger, Blob const& vec)
@@ -262,9 +258,6 @@ TxMeta::getAsObject() const
 
     if (hasParentBatchId())
         metaData.setFieldH256(sfParentBatchID, getParentBatchId());
-
-    if (hasContractFuelUsed())
-        metaData.setFieldU64(sfContractFuelUsed, getContractFuelUsed());
 
     return metaData;
 }

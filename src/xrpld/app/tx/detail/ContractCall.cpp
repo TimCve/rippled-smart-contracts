@@ -5,7 +5,6 @@
 #include <xrpl/protocol/AccountID.h>
 #include <xrpl/protocol/Feature.h>
 #include <xrpl/protocol/Indexes.h>
-#include <xrpl/protocol/SmartContract.h>
 #include <xrpl/protocol/STAmount.h>
 #include <xrpl/protocol/TxFlags.h>
 #include <xrpl/protocol/UintTypes.h>
@@ -89,60 +88,8 @@ policyCheck(bool cond, beast::Journal j, char const* msg)
 wasm_engine_t*
 getEngine()
 {
-    static wasm_engine_t* engine = []() {
-        wasm_config_t* config = wasm_config_new();
-        wasmtime_config_consume_fuel_set(config, true);
-        return wasm_engine_new_with_config(config);
-    }();
+    static wasm_engine_t* engine = []() { return wasm_engine_new(); }();
     return engine;
-}
-
-wasm_trap_t*
-useFuel(wasmtime_context_t* ctx, uint64_t amount, beast::Journal j)
-{
-    uint64_t fuel = 0;
-    if (auto* err = wasmtime_context_get_fuel(ctx, &fuel); err)
-    {
-        logWasmtimeError(j, err);
-        return makeTrap("fuel error");
-    }
-
-    if (fuel < amount)
-    {
-        if (auto* err = wasmtime_context_set_fuel(ctx, 0); err)
-            logWasmtimeError(j, err);
-        return makeTrap("out of fuel");
-    }
-
-    if (auto* err = wasmtime_context_set_fuel(ctx, fuel - amount); err)
-    {
-        logWasmtimeError(j, err);
-        return makeTrap("fuel error");
-    }
-
-    return nullptr;
-}
-
-bool
-fuelBudgetToXRP(std::uint64_t budget, XRPAmount& out)
-{
-    if (budget >
-        static_cast<std::uint64_t>(
-            std::numeric_limits<XRPAmount::value_type>::max()))
-    {
-        return false;
-    }
-    out = XRPAmount{static_cast<XRPAmount::value_type>(budget)};
-    return true;
-}
-
-std::uint64_t
-getFuelBudget(STTx const& tx)
-{
-    if (tx.isFieldPresent(sfContractFuelBudget))
-        return tx.getFieldU64(sfContractFuelBudget);
-
-    return kDefaultContractFuelBudget;
 }
 
 struct HostState
@@ -284,12 +231,6 @@ cb_get_caller_addr(
         return makeTrap("guest memory not available");
 
     uint32_t a_ptr = static_cast<uint32_t>(args[0].of.i32);
-    if (auto trap = useFuel(wasmtime_caller_context(caller), 100, st->j);
-        trap)
-    {
-        return trap;
-    }
-
     std::size_t msz = memSize(st);
     if (static_cast<uint64_t>(a_ptr) + ADDR_SIZE > msz)
     {
@@ -320,12 +261,6 @@ cb_get_owner_addr(
         return makeTrap("guest memory not available");
 
     uint32_t a_ptr = static_cast<uint32_t>(args[0].of.i32);
-    if (auto trap = useFuel(wasmtime_caller_context(caller), 100, st->j);
-        trap)
-    {
-        return trap;
-    }
-
     std::size_t msz = memSize(st);
     if (static_cast<uint64_t>(a_ptr) + ADDR_SIZE > msz)
     {
@@ -360,12 +295,6 @@ cb_escrow_caller_xrp(
 
     uint32_t id_ptr = static_cast<uint32_t>(args[0].of.i32);
     int64_t amount = args[1].of.i64;
-
-    if (auto trap = useFuel(wasmtime_caller_context(caller), 500, st->j);
-        trap)
-    {
-        return trap;
-    }
 
     if (st->callbackTer != tesSUCCESS)
     {
@@ -503,12 +432,6 @@ cb_escrow_owner_xrp(
     uint32_t id_ptr = static_cast<uint32_t>(args[0].of.i32);
     int64_t amount = args[1].of.i64;
 
-    if (auto trap = useFuel(wasmtime_caller_context(caller), 500, st->j);
-        trap)
-    {
-        return trap;
-    }
-
     if (st->callbackTer != tesSUCCESS)
     {
         results[0].of.i32 = -1;
@@ -644,12 +567,6 @@ cb_release_escrowed_xrp(
 
     uint32_t id_ptr = static_cast<uint32_t>(args[0].of.i32);
     uint32_t dest_ptr = static_cast<uint32_t>(args[1].of.i32);
-
-    if (auto trap = useFuel(wasmtime_caller_context(caller), 500, st->j);
-        trap)
-    {
-        return trap;
-    }
 
     if (st->callbackTer != tesSUCCESS)
     {
@@ -798,12 +715,6 @@ cb_create_state(
     int32_t data_len = args[1].of.i32;
     uint32_t id_ptr = static_cast<uint32_t>(args[2].of.i32);
 
-    if (auto trap = useFuel(wasmtime_caller_context(caller), 500, st->j);
-        trap)
-    {
-        return trap;
-    }
-
     if (st->callbackTer != tesSUCCESS)
     {
         results[0].of.i32 = -1;
@@ -919,12 +830,6 @@ cb_get_state(
     uint32_t out_ptr = static_cast<uint32_t>(args[1].of.i32);
     int32_t out_len = args[2].of.i32;
 
-    if (auto trap = useFuel(wasmtime_caller_context(caller), 300, st->j);
-        trap)
-    {
-        return trap;
-    }
-
     if (st->callbackTer != tesSUCCESS)
     {
         results[0].of.i32 = -1;
@@ -989,12 +894,6 @@ cb_set_state(
     uint32_t data_ptr = static_cast<uint32_t>(args[1].of.i32);
     int32_t data_len = args[2].of.i32;
 
-    if (auto trap = useFuel(wasmtime_caller_context(caller), 300, st->j);
-        trap)
-    {
-        return trap;
-    }
-
     if (st->callbackTer != tesSUCCESS)
     {
         results[0].of.i32 = -1;
@@ -1058,12 +957,6 @@ cb_delete_state(
         return makeTrap("guest memory not available");
 
     uint32_t id_ptr = static_cast<uint32_t>(args[0].of.i32);
-
-    if (auto trap = useFuel(wasmtime_caller_context(caller), 300, st->j);
-        trap)
-    {
-        return trap;
-    }
 
     if (st->callbackTer != tesSUCCESS)
     {
@@ -1150,12 +1043,6 @@ cb_get_params(
     uint32_t out_ptr = static_cast<uint32_t>(args[0].of.i32);
     int32_t out_len = args[1].of.i32;
 
-    if (auto trap = useFuel(wasmtime_caller_context(caller), 200, st->j);
-        trap)
-    {
-        return trap;
-    }
-
     if (!st->paramsPassed)
     {
         results[0].of.i32 = -1;
@@ -1194,9 +1081,6 @@ cb_params_passed(
         return makeTrap("paramsPassed signature mismatch");
     if (nresults != 1 || results[0].kind != WASMTIME_I32)
         return makeTrap("paramsPassed returns i32");
-
-    if (auto trap = useFuel(wasmtime_caller_context(caller), 50, st->j); trap)
-        return trap;
 
     results[0].of.i32 = st->paramsPassed ? 1 : 0;
     return nullptr;
@@ -1336,16 +1220,6 @@ ContractCall::preflight(PreflightContext const& ctx)
 
     if (ctx.tx.getFlags() & tfUniversalMask)
         return temINVALID_FLAG;
-
-    if (ctx.tx.isFieldPresent(sfContractFuelBudget))
-    {
-        XRPAmount dummy;
-        if (!fuelBudgetToXRP(ctx.tx.getFieldU64(sfContractFuelBudget), dummy))
-        {
-            JLOG(ctx.j.trace()) << "ContractCall: fuel budget too large";
-            return temMALFORMED;
-        }
-    }
     
     NotTEC const ret{preflight1(ctx)};
     if (!isTesSuccess(ret))
@@ -1357,14 +1231,29 @@ ContractCall::preflight(PreflightContext const& ctx)
 TxConsequences
 ContractCall::makeTxConsequences(PreflightContext const& ctx)
 {
-    XRPAmount fuelBudget{beast::zero};
-    if (auto const budget = getFuelBudget(ctx.tx);
-        fuelBudgetToXRP(budget, fuelBudget))
-    {
-        return TxConsequences{ctx.tx, fuelBudget};
-    }
+    return TxConsequences{ctx.tx};
+}
 
-    return TxConsequences{temMALFORMED};
+XRPAmount
+ContractCall::calculateBaseFee(ReadView const& view, STTx const& tx)
+{
+    XRPAmount fixedCost{beast::zero};
+    auto const contractAddress = tx[sfContractAddress];
+    if (auto const sleContract = view.read(keylet::smartContract(contractAddress)))
+    {
+        if (sleContract->isFieldPresent(sfContractCost))
+        {
+            auto const maxDrops =
+                static_cast<std::uint64_t>(
+                    std::numeric_limits<XRPAmount::value_type>::max());
+            auto const costDrops = sleContract->getFieldU64(sfContractCost);
+            auto const clampedDrops =
+                costDrops > maxDrops ? maxDrops : costDrops;
+            fixedCost = XRPAmount{
+                static_cast<XRPAmount::value_type>(clampedDrops)};
+        }
+    }
+    return Transactor::calculateBaseFee(view, tx) + fixedCost;
 }
 
 TER
@@ -1375,24 +1264,10 @@ ContractCall::preclaim(PreclaimContext const& ctx)
     if(!sleContract)
         return tecNO_ENTRY;
 
-    XRPAmount fuelBudget{beast::zero};
-    if (!fuelBudgetToXRP(getFuelBudget(ctx.tx), fuelBudget))
-        return temMALFORMED;
-
     auto const caller = ctx.tx.getAccountID(sfAccount);
     auto const callerSle = ctx.view.read(keylet::account(caller));
     if (!callerSle)
         return terNO_ACCOUNT;
-
-    XRPAmount required = fuelBudget;
-    auto const feePayer = ctx.tx.isFieldPresent(sfDelegate)
-        ? ctx.tx.getAccountID(sfDelegate)
-        : caller;
-    if (feePayer == caller)
-        required += ctx.tx.getFieldAmount(sfFee).xrp();
-
-    if (callerSle->getFieldAmount(sfBalance).xrp() < required)
-        return tecINSUFF_FEE;
 
     return tesSUCCESS;
 }
@@ -1418,19 +1293,6 @@ ContractCall::doApply()
         view().update(contractSle);
     }
 
-    XRPAmount fuelBudget{beast::zero};
-    auto const fuelBudgetDrops = getFuelBudget(ctx_.tx);
-    if (!fuelBudgetToXRP(fuelBudgetDrops, fuelBudget))
-        return tefINTERNAL;
-
-    ctx_.setFuelUsed(0);
-
-    auto callerSle = view().peek(keylet::account(account_));
-    if (!callerSle)
-        return tefINTERNAL;
-    if (callerSle->getFieldAmount(sfBalance).xrp() < fuelBudget)
-        return tecUNFUNDED_PAYMENT;
-
     HostState st{j_};
     st.view = &view();
     st.caller = account_;
@@ -1453,7 +1315,6 @@ ContractCall::doApply()
 
     wasmtime_linker_t* linker = nullptr;
     wasmtime_module_t* module = nullptr;
-    bool fuelConfigured = false;
 
     auto cleanup = [&]() {
         if (linker)
@@ -1464,66 +1325,10 @@ ContractCall::doApply()
             wasmtime_store_delete(store);
     };
 
-    auto recordFuel = [&](std::uint64_t& used) -> bool {
-        if (!fuelConfigured)
-            return false;
-
-        std::uint64_t remaining = 0;
-        if (auto* err = wasmtime_context_get_fuel(wctx, &remaining); err)
-        {
-            logWasmtimeError(j_, err);
-            return false;
-        }
-
-        if (remaining > fuelBudgetDrops)
-            remaining = fuelBudgetDrops;
-
-        used = fuelBudgetDrops - remaining;
-        return true;
-    };
-
-    auto chargeFuel = [&](std::uint64_t used) -> TER {
-        if (used == 0)
-            return tesSUCCESS;
-
-        XRPAmount usedAmount{beast::zero};
-        if (!fuelBudgetToXRP(used, usedAmount))
-            return tefINTERNAL;
-
-        auto fuelSle = view().peek(keylet::account(account_));
-        if (!fuelSle)
-            return tefINTERNAL;
-
-        STAmount const balance = fuelSle->getFieldAmount(sfBalance);
-        STAmount const fuelCharge{usedAmount};
-        if (balance < fuelCharge)
-            return tecUNFUNDED_PAYMENT;
-
-        fuelSle->setFieldAmount(sfBalance, balance - fuelCharge);
-        view().update(fuelSle);
-        return tesSUCCESS;
-    };
-
     auto finish = [&](TER ter) {
-        std::uint64_t used = 0;
-        if (recordFuel(used))
-        {
-            ctx_.setFuelUsed(used);
-            if (TER fuelTer = chargeFuel(used); fuelTer != tesSUCCESS)
-                ter = fuelTer;
-        }
         cleanup();
         return ter;
     };
-
-    if (TER const ter =
-            logWasmtimeFailure(
-                j_, wasmtime_context_set_fuel(wctx, fuelBudgetDrops), nullptr);
-        ter != tesSUCCESS)
-    {
-        return finish(ter);
-    }
-    fuelConfigured = true;
 
     if (TER const ter =
             logWasmtimeFailure(j_, wasmtime_module_new(engine, code.data(), code.size(), &module), nullptr);

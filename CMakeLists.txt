@@ -107,6 +107,17 @@ find_package(lz4 REQUIRED)
 find_package(LibArchive REQUIRED)
 find_package(SOCI REQUIRED)
 find_package(SQLite3 REQUIRED)
+
+# WebAssembly packages needed for Smart Contracts
+set(BUILD_TOOLS OFF CACHE BOOL "Don't build Binaryen CLI tools" FORCE)
+set(BUILD_TESTS OFF CACHE BOOL "Don't build Binaryen tests" FORCE)
+set(BUILD_FUZZTEST OFF CACHE BOOL "Don't build Binaryen fuzz tests" FORCE)
+add_subdirectory(external/binaryen)
+add_library(binaryen::binaryen ALIAS binaryen)
+target_include_directories(binaryen INTERFACE
+  ${CMAKE_CURRENT_SOURCE_DIR}/external/binaryen/src
+  ${CMAKE_CURRENT_BINARY_DIR}/external/binaryen
+)
 find_package(wasmtime REQUIRED)
 
 option(rocksdb "Enable RocksDB" ON)
@@ -123,6 +134,7 @@ find_package(date REQUIRED)
 find_package(xxHash REQUIRED)
 
 target_link_libraries(ripple_libs INTERFACE
+  binaryen::binaryen
   ed25519::ed25519
   lz4::lz4
   OpenSSL::Crypto

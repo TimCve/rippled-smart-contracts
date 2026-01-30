@@ -534,7 +534,6 @@ TRANSACTION(ttCONTRACT_CALL, 1002, ContractCall, Delegation::delegatable, ({
     {sfContractStateID, soeOPTIONAL},
     {sfContractParams, soeOPTIONAL},
     {sfContractOpt, soeOPTIONAL},
-    {sfContractFuelBudget, soeOPTIONAL},
 }))
 
 /** This system-generated transaction type is used to update the status of the various amendments.

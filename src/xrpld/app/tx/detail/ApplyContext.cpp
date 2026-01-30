@@ -60,7 +60,7 @@ std::optional<TxMeta>
 ApplyContext::apply(TER ter)
 {
     return view_->apply(
-        base_, tx, ter, parentBatchId_, fuelUsedDrops_, flags_ & tapDRY_RUN, journal);
+        base_, tx, ter, parentBatchId_, flags_ & tapDRY_RUN, journal);
 }
 
 std::size_t

@@ -32,12 +32,11 @@ ApplyViewImpl::apply(
     STTx const& tx,
     TER ter,
     std::optional<uint256> parentBatchId,
-    std::optional<std::uint64_t> const& fuelUsed,
     bool isDryRun,
     beast::Journal j)
 {
     return items_.apply(
-        to, tx, ter, deliver_, parentBatchId, fuelUsed, isDryRun, j);
+        to, tx, ter, deliver_, parentBatchId, isDryRun, j);
 }
 
 std::size_t

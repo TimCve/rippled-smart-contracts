@@ -29,13 +29,10 @@
 #include <xrpl/basics/Log.h>
 #include <xrpl/protocol/Feature.h>
 #include <xrpl/protocol/FeeUnits.h>
-#include <xrpl/protocol/SmartContract.h>
 #include <xrpl/protocol/STArray.h>
 #include <xrpl/protocol/SystemParameters.h>
 #include <xrpl/protocol/TxFormats.h>
 #include <xrpl/protocol/nftPageMask.h>
-
-#include <limits>
 
 namespace ripple {
 
@@ -75,25 +72,7 @@ TransactionFeeCheck::finalize(
 
     // We should never charge more for a transaction than the transaction
     // authorizes. It's possible to charge less in some circumstances.
-    XRPAmount maxFee = tx.getFieldAmount(sfFee).xrp();
-    if (tx.getTxnType() == ttCONTRACT_CALL)
-    {
-        std::uint64_t budget = kDefaultContractFuelBudget;
-        if (tx.isFieldPresent(sfContractFuelBudget))
-            budget = tx.getFieldU64(sfContractFuelBudget);
-
-        if (budget >
-            static_cast<std::uint64_t>(
-                std::numeric_limits<XRPAmount::value_type>::max()))
-        {
-            JLOG(j.fatal())
-                << "Invariant failed: contract fuel budget exceeds XRP range";
-            return false;
-        }
-
-        maxFee += XRPAmount{static_cast<XRPAmount::value_type>(budget)};
-    }
-
+    XRPAmount const maxFee = tx.getFieldAmount(sfFee).xrp();
     if (fee > maxFee)
     {
         JLOG(j.fatal()) << "Invariant failed: fee paid is " << fee.drops()
