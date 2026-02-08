@@ -3,7 +3,7 @@
 
 typedef struct PACKED
 {
-    uint64_t amount;
+    uint32_t amount;
     addr_t recipient;
 } params1_t;
 
