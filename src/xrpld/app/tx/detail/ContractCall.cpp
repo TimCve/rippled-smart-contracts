@@ -1,20 +1,24 @@
 #include <xrpld/app/tx/detail/ContractCall.h>
-#include <xrpl/basics/Blob.h>
-#include <xrpl/basics/Log.h>
+#include <xrpld/ledger/View.h>
+
 #include <xrpl/beast/utility/Zero.h>
 #include <xrpl/protocol/AccountID.h>
+#include <xrpl/protocol/UintTypes.h>
+#include <xrpl/protocol/STAmount.h>
 #include <xrpl/protocol/Feature.h>
 #include <xrpl/protocol/Indexes.h>
-#include <xrpl/protocol/STAmount.h>
 #include <xrpl/protocol/TxFlags.h>
-#include <xrpl/protocol/UintTypes.h>
 #include <xrpl/protocol/digest.h>
-#include <xrpl/protocol/smart_contract_abi.h>
-#include <xrpld/ledger/View.h>
-#include <wasmtime.h>
+#include <xrpl/basics/Blob.h>
+#include <xrpl/basics/Log.h>
 #include <cstring>
 #include <limits>
 #include <string>
+#include <unordered_map>
+
+#include <wasmtime.h>
+
+#include <xrpl/protocol/smart_contract_abi.h>
 
 namespace ripple {
 namespace {
@@ -98,6 +102,12 @@ struct HostState
     {
     }
 
+    struct GuardState
+    {
+        std::int32_t max = 0;
+        std::int32_t count = 0;
+    };
+
     beast::Journal const& j;
     wasmtime_context_t* ctx = nullptr;
 
@@ -112,6 +122,7 @@ struct HostState
     bool paramsPassed = false;
     std::uint64_t opt = 0;
     TER callbackTer = tesSUCCESS;
+    std::unordered_map<std::int32_t, GuardState> guards;
 };
 
 uint8_t* // get pointer to smart contract memory
@@ -284,7 +295,7 @@ cb_escrow_caller_xrp(
 {
     auto* st = reinterpret_cast<HostState*>(env);
     if (nargs != 2 || args[0].kind != WASMTIME_I32 ||
-        args[1].kind != WASMTIME_I64)
+        args[1].kind != WASMTIME_I32)
     {
         return makeTrap("escrowCallerXRP signature mismatch");
     }
@@ -294,7 +305,7 @@ cb_escrow_caller_xrp(
         return makeTrap("guest memory not available");
 
     uint32_t id_ptr = static_cast<uint32_t>(args[0].of.i32);
-    int64_t amount = args[1].of.i64;
+    int32_t amount = args[1].of.i32;
 
     if (st->callbackTer != tesSUCCESS)
     {
@@ -420,7 +431,7 @@ cb_escrow_owner_xrp(
 {
     auto* st = reinterpret_cast<HostState*>(env);
     if (nargs != 2 || args[0].kind != WASMTIME_I32 ||
-        args[1].kind != WASMTIME_I64)
+        args[1].kind != WASMTIME_I32)
     {
         return makeTrap("escrowOwnerXRP signature mismatch");
     }
@@ -430,7 +441,7 @@ cb_escrow_owner_xrp(
         return makeTrap("guest memory not available");
 
     uint32_t id_ptr = static_cast<uint32_t>(args[0].of.i32);
-    int64_t amount = args[1].of.i64;
+    int32_t amount = args[1].of.i32;
 
     if (st->callbackTer != tesSUCCESS)
     {
@@ -1086,6 +1097,45 @@ cb_params_passed(
     return nullptr;
 }
 
+wasm_trap_t*
+cb_loop_guard(
+    void* env,
+    wasmtime_caller_t* caller,
+    wasmtime_val_t const* args,
+    std::size_t nargs,
+    wasmtime_val_t* results,
+    std::size_t nresults)
+{
+    if (nargs != 2 || args[0].kind != WASMTIME_I32 ||
+        args[1].kind != WASMTIME_I32)
+    {
+        return makeTrap("_g signature mismatch");
+    }
+    if (nresults != 0)
+        return makeTrap("_g returns void");
+
+    auto* st = reinterpret_cast<HostState*>(env);
+    std::int32_t id = args[0].of.i32;
+    std::int32_t max_iters = args[1].of.i32;
+    if (max_iters <= 0)
+        return makeTrap("_g max_iters must be > 0");
+
+    auto it = st->guards.find(id);
+    if (it == st->guards.end())
+    {
+        st->guards.emplace(id, HostState::GuardState{max_iters, 1});
+        return nullptr;
+    }
+
+    if (it->second.max != max_iters)
+        return makeTrap("_g max_iters mismatch for id");
+    if (it->second.count >= it->second.max)
+        return makeTrap("_g exceeded max_iters");
+
+    ++it->second.count;
+    return nullptr;
+}
+
 bool
 enforceImportPolicy(wasmtime_module_t const* module, beast::Journal j)
 {
@@ -1112,7 +1162,7 @@ enforceImportPolicy(wasmtime_module_t const* module, beast::Journal j)
             nameEq(name, "releaseEscrowedXRP") || nameEq(name, "createState") ||
             nameEq(name, "getState") || nameEq(name, "deleteState") || 
             nameEq(name, "setState") || nameEq(name, "getParams") || 
-            nameEq(name, "paramsPassed");
+            nameEq(name, "paramsPassed") || nameEq(name, "_g");
         ok = policyCheck(allowed, j, "import name not allowed");
         if (!ok)
             break;
@@ -1536,6 +1586,22 @@ ContractCall::doApply()
         wasmtime_func_t f = makeFunc(wctx, ty, cb_params_passed, &st);
         wasm_functype_delete(ty);
         if (!defineFunc(linker, wctx, SC_HOST_MOD, "paramsPassed", f, j_))
+        {
+            return finish(tecFAILED_PROCESSING);
+        }
+    }
+
+    {
+        wasm_valtype_t* p[2] = {wasm_valtype_new_i32(), wasm_valtype_new_i32()};
+        wasm_valtype_vec_t params;
+        wasm_valtype_vec_t results;
+        wasm_valtype_vec_new(&params, 2, p);
+        wasm_valtype_vec_new(&results, 0, nullptr);
+        wasm_functype_t* ty = wasm_functype_new(&params, &results);
+
+        wasmtime_func_t f = makeFunc(wctx, ty, cb_loop_guard, &st);
+        wasm_functype_delete(ty);
+        if (!defineFunc(linker, wctx, SC_HOST_MOD, "_g", f, j_))
         {
             return finish(tecFAILED_PROCESSING);
         }

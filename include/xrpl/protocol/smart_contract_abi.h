@@ -21,6 +21,9 @@ extern "C" {
 #define PACKED
 #endif
 
+void
+_g(int32_t id, int32_t max_iters) WASM_IMPORT(SC_HOST_MOD, "_g");
+
 typedef struct PACKED
 {
     uint8_t bytes[20];
@@ -42,11 +45,11 @@ int32_t
 getOwnerAddr(int32_t a_ptr) WASM_IMPORT(SC_HOST_MOD, "getOwnerAddr");
 
 int32_t
-escrowCallerXRP(int32_t id_ptr, int64_t amount)
+escrowCallerXRP(int32_t id_ptr, int32_t amount)
     WASM_IMPORT(SC_HOST_MOD, "escrowCallerXRP");
 
 int32_t
-escrowOwnerXRP(int32_t id_ptr, int64_t amount)
+escrowOwnerXRP(int32_t id_ptr, int32_t amount)
     WASM_IMPORT(SC_HOST_MOD, "escrowOwnerXRP");
 
 int32_t
