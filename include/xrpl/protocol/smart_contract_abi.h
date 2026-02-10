@@ -55,19 +55,19 @@ unlockXRP(int32_t amount, int32_t account_ptr)
     WASM_IMPORT(SC_HOST_MOD, "unlockXRP");
 
 int32_t
-createState(int32_t data_ptr, int32_t data_len, int32_t id_ptr)
-    WASM_IMPORT(SC_HOST_MOD, "createState");
+createSmartObject(int32_t data_ptr, int32_t data_len, int32_t id_ptr)
+    WASM_IMPORT(SC_HOST_MOD, "createSmartObject");
 
 int32_t
-getState(int32_t id_ptr, int32_t out_ptr, int32_t out_len)
-    WASM_IMPORT(SC_HOST_MOD, "getState");
+getSmartObject(int32_t id_ptr, int32_t out_ptr, int32_t out_len)
+    WASM_IMPORT(SC_HOST_MOD, "getSmartObject");
 
 int32_t
-deleteState(int32_t id_ptr) WASM_IMPORT(SC_HOST_MOD, "deleteState");
+deleteSmartObject(int32_t id_ptr) WASM_IMPORT(SC_HOST_MOD, "deleteSmartObject");
 
 int32_t
-setState(int32_t id_ptr, int32_t data_ptr, int32_t data_len)
-    WASM_IMPORT(SC_HOST_MOD, "setState");
+setSmartObject(int32_t id_ptr, int32_t data_ptr, int32_t data_len)
+    WASM_IMPORT(SC_HOST_MOD, "setSmartObject");
 
 int32_t
 getParams(int32_t out_ptr, int32_t out_len)

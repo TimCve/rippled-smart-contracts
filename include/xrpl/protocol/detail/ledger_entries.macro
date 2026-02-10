@@ -517,14 +517,14 @@ LEDGER_ENTRY(ltSMART_CONTRACT, 0x0085, SmartContract, smart_contract, ({
     {sfPreviousTxnLgrSeq,    soeREQUIRED},
 }))
 
-/** Smart contract state entry.
-    \sa keylet::contractState
+/** Smart object entry for smart contracts.
+    \sa keylet::smartObject
  */
-LEDGER_ENTRY(ltCONTRACT_STATE, 0x0086, ContractState, contract_state, ({
-    {sfContractStateID,      soeREQUIRED},
+LEDGER_ENTRY(ltSMART_OBJECT, 0x0086, SmartObject, smart_object, ({
+    {sfSmartObjectID,        soeREQUIRED},
     {sfAccount,              soeREQUIRED},
     {sfContractID,           soeREQUIRED},
-    {sfContractStateData,    soeREQUIRED},
+    {sfSmartObjectData,      soeREQUIRED},
     {sfOwnerNode,            soeREQUIRED},
     {sfPreviousTxnID,        soeREQUIRED},
     {sfPreviousTxnLgrSeq,    soeREQUIRED},

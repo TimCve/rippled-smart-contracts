@@ -544,7 +544,7 @@ cb_unlock_xrp(
 }
 
 wasm_trap_t*
-cb_create_state(
+cb_create_smart_object(
     void* env,
     wasmtime_caller_t* caller,
     wasmtime_val_t const* args,
@@ -556,10 +556,10 @@ cb_create_state(
     if (nargs != 3 || args[0].kind != WASMTIME_I32 ||
         args[1].kind != WASMTIME_I32 || args[2].kind != WASMTIME_I32)
     {
-        return makeTrap("createState signature mismatch");
+        return makeTrap("createSmartObject signature mismatch");
     }
     if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("createState returns i32");
+        return makeTrap("createSmartObject returns i32");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
@@ -603,7 +603,7 @@ cb_create_state(
     }
     uint256 const stateID = makeContractObjectID(st, st->caller, *ownerDirIndex);
     auto const stateKeylet =
-        keylet::contractState(st->contractID, stateID);
+        keylet::smartObject(st->contractID, stateID);
     if (st->view->exists(stateKeylet))
     {
         st->callbackTer = tecFAILED_PROCESSING;
@@ -612,10 +612,10 @@ cb_create_state(
     }
 
     auto stateSle = std::make_shared<SLE>(stateKeylet);
-    (*stateSle)[sfContractStateID] = stateID;
+    (*stateSle)[sfSmartObjectID] = stateID;
     (*stateSle)[sfAccount] = st->caller;
     (*stateSle)[sfContractID] = st->contractID;
-    stateSle->setFieldVL(sfContractStateData, data);
+    stateSle->setFieldVL(sfSmartObjectData, data);
     st->view->insert(stateSle);
     if (TER const ter = addToOwnerDir(st, st->caller, stateKeylet, stateSle);
         ter != tesSUCCESS)
@@ -637,7 +637,7 @@ cb_create_state(
 }
 
 wasm_trap_t*
-cb_get_state(
+cb_get_smart_object(
     void* env,
     wasmtime_caller_t* caller,
     wasmtime_val_t const* args,
@@ -649,10 +649,10 @@ cb_get_state(
     if (nargs != 3 || args[0].kind != WASMTIME_I32 ||
         args[1].kind != WASMTIME_I32 || args[2].kind != WASMTIME_I32)
     {
-        return makeTrap("getState signature mismatch");
+        return makeTrap("getSmartObject signature mismatch");
     }
     if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("getState returns i32");
+        return makeTrap("getSmartObject returns i32");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
@@ -680,7 +680,7 @@ cb_get_state(
     }
 
     auto const stateKeylet =
-        keylet::contractState(st->contractID, stateID);
+        keylet::smartObject(st->contractID, stateID);
     auto stateSle = st->view->read(stateKeylet);
     if (!stateSle)
     {
@@ -688,7 +688,7 @@ cb_get_state(
         return nullptr;
     }
 
-    auto const& data = stateSle->getFieldVL(sfContractStateData);
+    auto const& data = stateSle->getFieldVL(sfSmartObjectData);
     if (data.size() > static_cast<std::size_t>(out_len))
     {
         results[0].of.i32 = -1;
@@ -701,7 +701,7 @@ cb_get_state(
 }
 
 wasm_trap_t*
-cb_set_state(
+cb_set_smart_object(
     void* env,
     wasmtime_caller_t* caller,
     wasmtime_val_t const* args,
@@ -713,10 +713,10 @@ cb_set_state(
     if (nargs != 3 || args[0].kind != WASMTIME_I32 ||
         args[1].kind != WASMTIME_I32 || args[2].kind != WASMTIME_I32)
     {
-        return makeTrap("setState signature mismatch");
+        return makeTrap("setSmartObject signature mismatch");
     }
     if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("setState returns i32");
+        return makeTrap("setSmartObject returns i32");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
@@ -745,7 +745,7 @@ cb_set_state(
     }
 
     auto const stateKeylet =
-        keylet::contractState(st->contractID, stateID);
+        keylet::smartObject(st->contractID, stateID);
     auto stateSle = st->view->peek(stateKeylet);
     if (!stateSle)
     {
@@ -762,7 +762,7 @@ cb_set_state(
     Blob data;
     data.assign(memData(st) + data_ptr,
                 memData(st) + data_ptr + static_cast<uint32_t>(data_len));
-    stateSle->setFieldVL(sfContractStateData, data);
+    stateSle->setFieldVL(sfSmartObjectData, data);
     st->view->update(stateSle);
 
     results[0].of.i32 = 0;
@@ -770,7 +770,7 @@ cb_set_state(
 }
 
 wasm_trap_t*
-cb_delete_state(
+cb_delete_smart_object(
     void* env,
     wasmtime_caller_t* caller,
     wasmtime_val_t const* args,
@@ -780,9 +780,9 @@ cb_delete_state(
 {
     auto* st = reinterpret_cast<HostState*>(env);
     if (nargs != 1 || args[0].kind != WASMTIME_I32)
-        return makeTrap("deleteState signature mismatch");
+        return makeTrap("deleteSmartObject signature mismatch");
     if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("deleteState returns i32");
+        return makeTrap("deleteSmartObject returns i32");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
@@ -802,7 +802,7 @@ cb_delete_state(
     }
 
     auto const stateKeylet =
-        keylet::contractState(st->contractID, stateID);
+        keylet::smartObject(st->contractID, stateID);
     auto stateSle = st->view->peek(stateKeylet);
     if (!stateSle)
     {
@@ -954,9 +954,9 @@ enforceImportPolicy(wasmtime_module_t const* module, beast::Journal j)
         bool allowed =
             nameEq(name, "getCallerAddr") || nameEq(name, "getOwnerAddr") ||
             nameEq(name, "lockCallerXRP") || nameEq(name, "lockOwnerXRP") ||
-            nameEq(name, "unlockXRP") || nameEq(name, "createState") ||
-            nameEq(name, "getState") || nameEq(name, "deleteState") || 
-            nameEq(name, "setState") || nameEq(name, "getParams") || 
+            nameEq(name, "unlockXRP") || nameEq(name, "createSmartObject") ||
+            nameEq(name, "getSmartObject") || nameEq(name, "deleteSmartObject") || 
+            nameEq(name, "setSmartObject") || nameEq(name, "getParams") || 
             nameEq(name, "paramsPassed") || nameEq(name, "_g");
         ok = policyCheck(allowed, j, "import name not allowed");
         if (!ok)
@@ -1286,9 +1286,9 @@ ContractCall::doApply()
         wasm_valtype_vec_new(&results, 1, r);
         wasm_functype_t* ty = wasm_functype_new(&params, &results);
 
-        wasmtime_func_t f = makeFunc(wctx, ty, cb_create_state, &st);
+        wasmtime_func_t f = makeFunc(wctx, ty, cb_create_smart_object, &st);
         wasm_functype_delete(ty);
-        if (!defineFunc(linker, wctx, SC_HOST_MOD, "createState", f, j_))
+        if (!defineFunc(linker, wctx, SC_HOST_MOD, "createSmartObject", f, j_))
         {
             return finish(tecFAILED_PROCESSING);
         }
@@ -1306,9 +1306,9 @@ ContractCall::doApply()
         wasm_valtype_vec_new(&results, 1, r);
         wasm_functype_t* ty = wasm_functype_new(&params, &results);
 
-        wasmtime_func_t f = makeFunc(wctx, ty, cb_get_state, &st);
+        wasmtime_func_t f = makeFunc(wctx, ty, cb_get_smart_object, &st);
         wasm_functype_delete(ty);
-        if (!defineFunc(linker, wctx, SC_HOST_MOD, "getState", f, j_))
+        if (!defineFunc(linker, wctx, SC_HOST_MOD, "getSmartObject", f, j_))
         {
             return finish(tecFAILED_PROCESSING);
         }
@@ -1326,9 +1326,9 @@ ContractCall::doApply()
         wasm_valtype_vec_new(&results, 1, r);
         wasm_functype_t* ty = wasm_functype_new(&params, &results);
 
-        wasmtime_func_t f = makeFunc(wctx, ty, cb_set_state, &st);
+        wasmtime_func_t f = makeFunc(wctx, ty, cb_set_smart_object, &st);
         wasm_functype_delete(ty);
-        if (!defineFunc(linker, wctx, SC_HOST_MOD, "setState", f, j_))
+        if (!defineFunc(linker, wctx, SC_HOST_MOD, "setSmartObject", f, j_))
         {
             return finish(tecFAILED_PROCESSING);
         }
@@ -1343,9 +1343,9 @@ ContractCall::doApply()
         wasm_valtype_vec_new(&results, 1, r);
         wasm_functype_t* ty = wasm_functype_new(&params, &results);
 
-        wasmtime_func_t f = makeFunc(wctx, ty, cb_delete_state, &st);
+        wasmtime_func_t f = makeFunc(wctx, ty, cb_delete_smart_object, &st);
         wasm_functype_delete(ty);
-        if (!defineFunc(linker, wctx, SC_HOST_MOD, "deleteState", f, j_))
+        if (!defineFunc(linker, wctx, SC_HOST_MOD, "deleteSmartObject", f, j_))
         {
             return finish(tecFAILED_PROCESSING);
         }

@@ -570,7 +570,7 @@ LedgerEntryTypesMatch::visitEntry(
             case ltPERMISSIONED_DOMAIN:
             case ltVAULT:
             case ltSMART_CONTRACT:
-            case ltCONTRACT_STATE:
+            case ltSMART_OBJECT:
                 break;
             default:
                 invalidTypeAdded_ = true;

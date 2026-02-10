@@ -354,7 +354,7 @@ Keylet
 smartContract(uint256 const& contractID) noexcept;
 
 Keylet
-contractState(uint256 const& contractID, uint256 const& stateID) noexcept;
+smartObject(uint256 const& contractID, uint256 const& smartObjectID) noexcept;
 }  // namespace keylet
 
 // Everything below is deprecated and should be removed in favor of keylets:

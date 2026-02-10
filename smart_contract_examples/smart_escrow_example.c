@@ -46,7 +46,7 @@ int32_t entrypoint(int64_t opt)
             return -3;
 
         id256_t state_id;
-        if(createState((int32_t)&state, (int32_t)sizeof(state_t), (int32_t)&state_id) != 0)
+        if(createSmartObject((int32_t)&state, (int32_t)sizeof(state_t), (int32_t)&state_id) != 0)
             return -4;
 
     // opt = 2 : claim
@@ -56,7 +56,7 @@ int32_t entrypoint(int64_t opt)
         if(got != (int32_t)sizeof(params2_t)) return -5;
 
         state_t state;
-        int32_t sz = getState((int32_t)&params.state_id, (int32_t)&state, sizeof(state_t));
+        int32_t sz = getSmartObject((int32_t)&params.state_id, (int32_t)&state, sizeof(state_t));
         if(sz != (int32_t)sizeof(state_t)) return -6;
         
         addr_t caller;
@@ -67,7 +67,7 @@ int32_t entrypoint(int64_t opt)
             if(unlockXRP((int32_t)state.amount, (int32_t)&caller) != 0)
                 return -9;
             
-            if(deleteState((int32_t)&params.state_id) != 0)
+            if(deleteSmartObject((int32_t)&params.state_id) != 0)
                 return -10;
         } else return -8;
     } else return -11;
