@@ -325,7 +325,7 @@ cb_get_owner_addr(
 }
 
 wasm_trap_t*
-cb_escrow_caller_xrp(
+cb_lock_caller_xrp(
     void* env,
     wasmtime_caller_t* caller,
     wasmtime_val_t const* args,
@@ -334,18 +334,14 @@ cb_escrow_caller_xrp(
     std::size_t nresults)
 {
     auto* st = reinterpret_cast<HostState*>(env);
-    if (nargs != 2 || args[0].kind != WASMTIME_I32 ||
-        args[1].kind != WASMTIME_I32)
-    {
-        return makeTrap("escrowCallerXRP signature mismatch");
-    }
+    if (nargs != 1 || args[0].kind != WASMTIME_I32)
+        return makeTrap("lockCallerXRP signature mismatch");
     if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("escrowCallerXRP returns i32");
+        return makeTrap("lockCallerXRP returns i32");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
-    uint32_t id_ptr = static_cast<uint32_t>(args[0].of.i32);
-    int32_t amount = args[1].of.i32;
+    int32_t amount = args[0].of.i32;
 
     if (st->callbackTer != tesSUCCESS)
     {
@@ -353,7 +349,7 @@ cb_escrow_caller_xrp(
         return nullptr;
     }
 
-    if (amount <= 0 || !memSliceOk(st, id_ptr, ID256_SIZE))
+    if (amount <= 0)
     {
         st->callbackTer = tecFAILED_PROCESSING;
         results[0].of.i32 = -1;
@@ -372,43 +368,7 @@ cb_escrow_caller_xrp(
         return nullptr;
     }
 
-    if (TER const ter = checkReserve(st, funder, 1, amt);
-        ter != tesSUCCESS)
-    {
-        st->callbackTer = ter;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-
-    auto const ownerDirIndex = nextOwnerDirIndex(st, funder);
-    if (!ownerDirIndex)
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-    uint256 const escrowID = makeContractObjectID(st, funder, *ownerDirIndex);
-    auto const escrowKeylet =
-        keylet::smartEscrow(st->contractID, escrowID);
-    if (st->view->exists(escrowKeylet))
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-
-    contractSle->setFieldAmount(
-        sfContractBalance,
-        contractSle->getFieldAmount(sfContractBalance) + amt);
-    st->view->update(contractSle);
-
-    auto escrowSle = std::make_shared<SLE>(escrowKeylet);
-    (*escrowSle)[sfSmartEscrowID] = escrowID;
-    (*escrowSle)[sfContractID] = st->contractID;
-    (*escrowSle)[sfAccount] = funder;
-    escrowSle->setFieldAmount(sfAmount, amt);
-    st->view->insert(escrowSle);
-    if (TER const ter = addToOwnerDir(st, funder, escrowKeylet, escrowSle);
+    if (TER const ter = checkReserve(st, funder, 0, amt);
         ter != tesSUCCESS)
     {
         st->callbackTer = ter;
@@ -423,23 +383,21 @@ cb_escrow_caller_xrp(
         results[0].of.i32 = -1;
         return nullptr;
     }
+
+    contractSle->setFieldAmount(
+        sfContractBalance,
+        contractSle->getFieldAmount(sfContractBalance) + amt);
+    st->view->update(contractSle);
     funderSle->setFieldAmount(
         sfBalance, funderSle->getFieldAmount(sfBalance) - amt);
     st->view->update(funderSle);
-
-    if (!writeId256(st, id_ptr, escrowID))
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
 
     results[0].of.i32 = 0;
     return nullptr;
 }
 
 wasm_trap_t*
-cb_escrow_owner_xrp(
+cb_lock_owner_xrp(
     void* env,
     wasmtime_caller_t* caller,
     wasmtime_val_t const* args,
@@ -448,18 +406,14 @@ cb_escrow_owner_xrp(
     std::size_t nresults)
 {
     auto* st = reinterpret_cast<HostState*>(env);
-    if (nargs != 2 || args[0].kind != WASMTIME_I32 ||
-        args[1].kind != WASMTIME_I32)
-    {
-        return makeTrap("escrowOwnerXRP signature mismatch");
-    }
+    if (nargs != 1 || args[0].kind != WASMTIME_I32)
+        return makeTrap("lockOwnerXRP signature mismatch");
     if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("escrowOwnerXRP returns i32");
+        return makeTrap("lockOwnerXRP returns i32");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
-    uint32_t id_ptr = static_cast<uint32_t>(args[0].of.i32);
-    int32_t amount = args[1].of.i32;
+    int32_t amount = args[0].of.i32;
 
     if (st->callbackTer != tesSUCCESS)
     {
@@ -467,7 +421,7 @@ cb_escrow_owner_xrp(
         return nullptr;
     }
 
-    if (amount <= 0 || !memSliceOk(st, id_ptr, ID256_SIZE))
+    if (amount <= 0)
     {
         st->callbackTer = tecFAILED_PROCESSING;
         results[0].of.i32 = -1;
@@ -486,43 +440,7 @@ cb_escrow_owner_xrp(
         return nullptr;
     }
 
-    if (TER const ter = checkReserve(st, funder, 1, amt);
-        ter != tesSUCCESS)
-    {
-        st->callbackTer = ter;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-
-    auto const ownerDirIndex = nextOwnerDirIndex(st, funder);
-    if (!ownerDirIndex)
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-    uint256 const escrowID = makeContractObjectID(st, funder, *ownerDirIndex);
-    auto const escrowKeylet =
-        keylet::smartEscrow(st->contractID, escrowID);
-    if (st->view->exists(escrowKeylet))
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-
-    contractSle->setFieldAmount(
-        sfContractBalance,
-        contractSle->getFieldAmount(sfContractBalance) + amt);
-    st->view->update(contractSle);
-
-    auto escrowSle = std::make_shared<SLE>(escrowKeylet);
-    (*escrowSle)[sfSmartEscrowID] = escrowID;
-    (*escrowSle)[sfContractID] = st->contractID;
-    (*escrowSle)[sfAccount] = funder;
-    escrowSle->setFieldAmount(sfAmount, amt);
-    st->view->insert(escrowSle);
-    if (TER const ter = addToOwnerDir(st, funder, escrowKeylet, escrowSle);
+    if (TER const ter = checkReserve(st, funder, 0, amt);
         ter != tesSUCCESS)
     {
         st->callbackTer = ter;
@@ -537,23 +455,21 @@ cb_escrow_owner_xrp(
         results[0].of.i32 = -1;
         return nullptr;
     }
+
+    contractSle->setFieldAmount(
+        sfContractBalance,
+        contractSle->getFieldAmount(sfContractBalance) + amt);
+    st->view->update(contractSle);
     funderSle->setFieldAmount(
         sfBalance, funderSle->getFieldAmount(sfBalance) - amt);
     st->view->update(funderSle);
-
-    if (!writeId256(st, id_ptr, escrowID))
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
 
     results[0].of.i32 = 0;
     return nullptr;
 }
 
 wasm_trap_t*
-cb_release_escrowed_xrp(
+cb_unlock_xrp(
     void* env,
     wasmtime_caller_t* caller,
     wasmtime_val_t const* args,
@@ -564,15 +480,13 @@ cb_release_escrowed_xrp(
     auto* st = reinterpret_cast<HostState*>(env);
     if (nargs != 2 || args[0].kind != WASMTIME_I32 ||
         args[1].kind != WASMTIME_I32)
-    {
-        return makeTrap("releaseEscrowedXRP signature mismatch");
-    }
+        return makeTrap("unlockXRP signature mismatch");
     if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("releaseEscrowedXRP returns i32");
+        return makeTrap("unlockXRP returns i32");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
-    uint32_t id_ptr = static_cast<uint32_t>(args[0].of.i32);
+    int32_t amount = args[0].of.i32;
     uint32_t dest_ptr = static_cast<uint32_t>(args[1].of.i32);
 
     if (st->callbackTer != tesSUCCESS)
@@ -581,15 +495,7 @@ cb_release_escrowed_xrp(
         return nullptr;
     }
 
-    uint256 escrowID;
-    if (!readId256(st, id_ptr, escrowID))
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-
-    if (!memSliceOk(st, dest_ptr, ADDR_SIZE))
+    if (amount <= 0 || !memSliceOk(st, dest_ptr, ADDR_SIZE))
     {
         st->callbackTer = tecFAILED_PROCESSING;
         results[0].of.i32 = -1;
@@ -600,30 +506,7 @@ cb_release_escrowed_xrp(
     std::memcpy(&dest_addr, memData(st) + dest_ptr, ADDR_SIZE);
     AccountID dest = AccountID::fromVoid(dest_addr.bytes);
 
-    auto const escrowKeylet =
-        keylet::smartEscrow(st->contractID, escrowID);
-    auto escrowSle = st->view->peek(escrowKeylet);
-    if (!escrowSle)
-    {
-        st->callbackTer = tecNO_ENTRY;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-
-    if (escrowSle->getFieldH256(sfContractID) != st->contractID)
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-
-    STAmount const amt = escrowSle->getFieldAmount(sfAmount);
-    if (!amt.native() || amt <= beast::zero)
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+    STAmount const amt{XRPAmount{amount}};
 
     auto contractSle =
         st->view->peek(keylet::smartContract(st->contractID));
@@ -655,19 +538,6 @@ cb_release_escrowed_xrp(
 
     destSle->setFieldAmount(sfBalance, destSle->getFieldAmount(sfBalance) + amt);
     st->view->update(destSle);
-
-    AccountID const owner = escrowSle->getAccountID(sfAccount);
-
-    if (TER const ter =
-            removeFromOwnerDir(st, owner, escrowKeylet, escrowSle);
-        ter != tesSUCCESS)
-    {
-        st->callbackTer = ter;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-
-    st->view->erase(escrowSle);
 
     results[0].of.i32 = 0;
     return nullptr;
@@ -1083,8 +953,8 @@ enforceImportPolicy(wasmtime_module_t const* module, beast::Journal j)
 
         bool allowed =
             nameEq(name, "getCallerAddr") || nameEq(name, "getOwnerAddr") ||
-            nameEq(name, "escrowCallerXRP") || nameEq(name, "escrowOwnerXRP") ||
-            nameEq(name, "releaseEscrowedXRP") || nameEq(name, "createState") ||
+            nameEq(name, "lockCallerXRP") || nameEq(name, "lockOwnerXRP") ||
+            nameEq(name, "unlockXRP") || nameEq(name, "createState") ||
             nameEq(name, "getState") || nameEq(name, "deleteState") || 
             nameEq(name, "setState") || nameEq(name, "getParams") || 
             nameEq(name, "paramsPassed") || nameEq(name, "_g");
@@ -1354,34 +1224,34 @@ ContractCall::doApply()
     }
 
     {
-        wasm_valtype_t* p[2] = {wasm_valtype_new_i32(), wasm_valtype_new_i64()};
+        wasm_valtype_t* p[1] = {wasm_valtype_new_i32()};
         wasm_valtype_t* r[1] = {wasm_valtype_new_i32()};
         wasm_valtype_vec_t params;
         wasm_valtype_vec_t results;
-        wasm_valtype_vec_new(&params, 2, p);
+        wasm_valtype_vec_new(&params, 1, p);
         wasm_valtype_vec_new(&results, 1, r);
         wasm_functype_t* ty = wasm_functype_new(&params, &results);
 
-        wasmtime_func_t f = makeFunc(wctx, ty, cb_escrow_caller_xrp, &st);
+        wasmtime_func_t f = makeFunc(wctx, ty, cb_lock_caller_xrp, &st);
         wasm_functype_delete(ty);
-        if (!defineFunc(linker, wctx, SC_HOST_MOD, "escrowCallerXRP", f, j_))
+        if (!defineFunc(linker, wctx, SC_HOST_MOD, "lockCallerXRP", f, j_))
         {
             return finish(tecFAILED_PROCESSING);
         }
     }
 
     {
-        wasm_valtype_t* p[2] = {wasm_valtype_new_i32(), wasm_valtype_new_i64()};
+        wasm_valtype_t* p[1] = {wasm_valtype_new_i32()};
         wasm_valtype_t* r[1] = {wasm_valtype_new_i32()};
         wasm_valtype_vec_t params;
         wasm_valtype_vec_t results;
-        wasm_valtype_vec_new(&params, 2, p);
+        wasm_valtype_vec_new(&params, 1, p);
         wasm_valtype_vec_new(&results, 1, r);
         wasm_functype_t* ty = wasm_functype_new(&params, &results);
 
-        wasmtime_func_t f = makeFunc(wctx, ty, cb_escrow_owner_xrp, &st);
+        wasmtime_func_t f = makeFunc(wctx, ty, cb_lock_owner_xrp, &st);
         wasm_functype_delete(ty);
-        if (!defineFunc(linker, wctx, SC_HOST_MOD, "escrowOwnerXRP", f, j_))
+        if (!defineFunc(linker, wctx, SC_HOST_MOD, "lockOwnerXRP", f, j_))
         {
             return finish(tecFAILED_PROCESSING);
         }
@@ -1396,11 +1266,9 @@ ContractCall::doApply()
         wasm_valtype_vec_new(&results, 1, r);
         wasm_functype_t* ty = wasm_functype_new(&params, &results);
 
-        wasmtime_func_t f =
-            makeFunc(wctx, ty, cb_release_escrowed_xrp, &st);
+        wasmtime_func_t f = makeFunc(wctx, ty, cb_unlock_xrp, &st);
         wasm_functype_delete(ty);
-        if (!defineFunc(
-                linker, wctx, SC_HOST_MOD, "releaseEscrowedXRP", f, j_))
+        if (!defineFunc(linker, wctx, SC_HOST_MOD, "unlockXRP", f, j_))
         {
             return finish(tecFAILED_PROCESSING);
         }

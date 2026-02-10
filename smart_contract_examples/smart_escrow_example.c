@@ -15,7 +15,7 @@ typedef struct PACKED
 typedef struct PACKED
 {
     addr_t recipient;
-    id256_t escrow_id;
+    uint32_t amount;
 } state_t;
 
 // TODO: move into ABI and include as standard
@@ -41,7 +41,8 @@ int32_t entrypoint(int64_t opt)
         
         state_t state;
         state.recipient = params.recipient;
-        if(escrowCallerXRP((int32_t)&state.escrow_id, params.amount) != 0)
+        state.amount = params.amount;
+        if(lockCallerXRP((int32_t)params.amount) != 0)
             return -3;
 
         id256_t state_id;
@@ -63,7 +64,7 @@ int32_t entrypoint(int64_t opt)
             return -7;
 
         if(memeq(&caller, &state.recipient, ADDR_SIZE)) {
-            if(releaseEscrowedXRP((int32_t)&state.escrow_id, (int32_t)&caller) != 0)
+            if(unlockXRP((int32_t)state.amount, (int32_t)&caller) != 0)
                 return -9;
             
             if(deleteState((int32_t)&params.state_id) != 0)

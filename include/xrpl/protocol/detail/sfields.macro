@@ -201,7 +201,6 @@ TYPED_SFIELD(sfVaultID,                  UINT256,   35)
 TYPED_SFIELD(sfParentBatchID,            UINT256,   36)
 TYPED_SFIELD(sfContractID,               UINT256,   37)
 TYPED_SFIELD(sfContractStateID,          UINT256,   38)
-TYPED_SFIELD(sfSmartEscrowID,            UINT256,   39)
 
 // number (common)
 TYPED_SFIELD(sfNumber,                   NUMBER,     1)

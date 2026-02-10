@@ -91,12 +91,13 @@ XRPNotCreated::visitEntry(
     std::shared_ptr<SLE const> const& before,
     std::shared_ptr<SLE const> const& after)
 {
-    /* We go through all modified ledger entries, looking only at account roots,
-     * escrow payments, and payment channels. We remove from the total any
-     * previous XRP values and add to the total any new XRP values. The net
-     * balance of a payment channel is computed from two fields (amount and
-     * balance) and deletions are ignored for paychan and escrow because the
-     * amount fields have not been adjusted for those in the case of deletion.
+    /* We go through all modified ledger entries, looking at account roots,
+     * escrow payments, payment channels, and smart contract balances.
+     * We remove from the total any previous XRP values and add to the total
+     * any new XRP values. The net balance of a payment channel is computed
+     * from two fields (amount and balance), and deletions are ignored for
+     * paychan and escrow because the amount fields have not been adjusted
+     * for those in the case of deletion.
      */
     if (before)
     {
@@ -113,9 +114,12 @@ XRPNotCreated::visitEntry(
                 if (isXRP((*before)[sfAmount]))
                     drops_ -= (*before)[sfAmount].xrp().drops();
                 break;
-            case ltSMART_ESCROW:
-                if (isXRP((*before)[sfAmount]))
-                    drops_ -= (*before)[sfAmount].xrp().drops();
+            case ltSMART_CONTRACT:
+                if (before->isFieldPresent(sfContractBalance) &&
+                    isXRP((*before)[sfContractBalance]))
+                {
+                    drops_ -= (*before)[sfContractBalance].xrp().drops();
+                }
                 break;
             default:
                 break;
@@ -139,9 +143,12 @@ XRPNotCreated::visitEntry(
                 if (!isDelete && isXRP((*after)[sfAmount]))
                     drops_ += (*after)[sfAmount].xrp().drops();
                 break;
-            case ltSMART_ESCROW:
-                if (!isDelete && isXRP((*after)[sfAmount]))
-                    drops_ += (*after)[sfAmount].xrp().drops();
+            case ltSMART_CONTRACT:
+                if (!isDelete && after->isFieldPresent(sfContractBalance) &&
+                    isXRP((*after)[sfContractBalance]))
+                {
+                    drops_ += (*after)[sfContractBalance].xrp().drops();
+                }
                 break;
             default:
                 break;
@@ -205,9 +212,19 @@ XRPBalanceChecks::visitEntry(
 
     if (before && before->getType() == ltACCOUNT_ROOT)
         bad_ |= isBad((*before)[sfBalance]);
+    if (before && before->getType() == ltSMART_CONTRACT &&
+        before->isFieldPresent(sfContractBalance))
+    {
+        bad_ |= isBad((*before)[sfContractBalance]);
+    }
 
     if (after && after->getType() == ltACCOUNT_ROOT)
         bad_ |= isBad((*after)[sfBalance]);
+    if (after && after->getType() == ltSMART_CONTRACT &&
+        after->isFieldPresent(sfContractBalance))
+    {
+        bad_ |= isBad((*after)[sfContractBalance]);
+    }
 }
 
 bool
@@ -554,7 +571,6 @@ LedgerEntryTypesMatch::visitEntry(
             case ltVAULT:
             case ltSMART_CONTRACT:
             case ltCONTRACT_STATE:
-            case ltSMART_ESCROW:
                 break;
             default:
                 invalidTypeAdded_ = true;

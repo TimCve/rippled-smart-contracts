@@ -45,16 +45,14 @@ int32_t
 getOwnerAddr(int32_t a_ptr) WASM_IMPORT(SC_HOST_MOD, "getOwnerAddr");
 
 int32_t
-escrowCallerXRP(int32_t id_ptr, int32_t amount)
-    WASM_IMPORT(SC_HOST_MOD, "escrowCallerXRP");
+lockCallerXRP(int32_t amount) WASM_IMPORT(SC_HOST_MOD, "lockCallerXRP");
 
 int32_t
-escrowOwnerXRP(int32_t id_ptr, int32_t amount)
-    WASM_IMPORT(SC_HOST_MOD, "escrowOwnerXRP");
+lockOwnerXRP(int32_t amount) WASM_IMPORT(SC_HOST_MOD, "lockOwnerXRP");
 
 int32_t
-releaseEscrowedXRP(int32_t id_ptr, int32_t dest_ptr)
-    WASM_IMPORT(SC_HOST_MOD, "releaseEscrowedXRP");
+unlockXRP(int32_t amount, int32_t account_ptr)
+    WASM_IMPORT(SC_HOST_MOD, "unlockXRP");
 
 int32_t
 createState(int32_t data_ptr, int32_t data_len, int32_t id_ptr)

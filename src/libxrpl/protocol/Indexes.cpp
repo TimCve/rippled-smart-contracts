@@ -98,8 +98,6 @@ enum class LedgerNameSpace : std::uint16_t {
     VAULT = 'V',
     SMART_CONTRACT = 'J',
     CONTRACT_STATE = 'Y',
-    SMART_ESCROW = 'Z',
-
     // No longer used or supported. Left here to reserve the space
     // to avoid accidental reuse.
     CONTRACT [[deprecated]] = 'c',
@@ -597,14 +595,6 @@ contractState(uint256 const& contractID, uint256 const& stateID) noexcept
     return {
         ltCONTRACT_STATE,
         indexHash(LedgerNameSpace::CONTRACT_STATE, contractID, stateID)};
-}
-
-Keylet
-smartEscrow(uint256 const& contractID, uint256 const& escrowID) noexcept
-{
-    return {
-        ltSMART_ESCROW,
-        indexHash(LedgerNameSpace::SMART_ESCROW, contractID, escrowID)};
 }
 
 /*
