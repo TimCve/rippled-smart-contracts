@@ -11,8 +11,10 @@
 #include <xrpl/protocol/digest.h>
 #include <xrpl/basics/Blob.h>
 #include <xrpl/basics/Log.h>
+#include <algorithm>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -117,7 +119,7 @@ struct HostState
     ApplyView* view = nullptr;
     AccountID caller;
     AccountID owner;
-    uint256 contractAddress;
+    uint256 contractID;
     Blob params;
     bool paramsPassed = false;
     std::uint64_t opt = 0;
@@ -195,12 +197,16 @@ addToOwnerDir(
     HostState* st,
     AccountID const& owner,
     Keylet const& objKeylet,
-    std::shared_ptr<SLE> const& sle)
+    std::shared_ptr<SLE> const& sle,
+    std::uint64_t* insertedPage = nullptr)
 {
     auto const page = st->view->dirInsert(
         keylet::ownerDir(owner), objKeylet, describeOwnerDir(owner));
     if (!page)
         return tecDIR_FULL;
+
+    if (insertedPage)
+        *insertedPage = *page;
 
     sle->setFieldU64(sfOwnerNode, *page);
     st->view->update(sle);
@@ -222,6 +228,40 @@ removeFromOwnerDir(
 
     adjustOwnerCount(*st->view, st->view->peek(keylet::account(owner)), -1, st->j);
     return tesSUCCESS;
+}
+
+std::optional<std::uint32_t>
+nextOwnerDirIndex(HostState* st, AccountID const& owner)
+{
+    if (!st->view)
+        return std::nullopt;
+
+    auto const ownerSle = st->view->peek(keylet::account(owner));
+    if (!ownerSle)
+        return std::nullopt;
+
+    auto const ownerCount = ownerSle->getFieldU32(sfOwnerCount);
+    if (ownerCount == std::numeric_limits<std::uint32_t>::max())
+        return std::nullopt;
+
+    // Use the account's next owner-dir position as a deterministic per-account
+    // sequence surrogate now that CONTRACT_DIR has been removed.
+    return ownerCount + 1;
+}
+
+uint256
+makeContractObjectID(
+    HostState* st,
+    AccountID const& owner,
+    std::uint32_t ownerDirIndex)
+{
+    auto const closeTimeCount =
+        st->view->parentCloseTime().time_since_epoch().count();
+    auto const closeTime =
+        static_cast<std::uint32_t>(std::max<std::int64_t>(0, closeTimeCount));
+    auto const entropy =
+        (static_cast<std::uint64_t>(closeTime) << 32) | ownerDirIndex;
+    return sha512Half(st->contractID, owner, entropy);
 }
 
 wasm_trap_t*
@@ -324,7 +364,7 @@ cb_escrow_caller_xrp(
     STAmount const amt{XRPAmount{amount}};
 
     auto contractSle =
-        st->view->peek(keylet::smartContract(st->contractAddress));
+        st->view->peek(keylet::smartContract(st->contractID));
     if (!contractSle)
     {
         st->callbackTer = tecNO_ENTRY;
@@ -332,11 +372,7 @@ cb_escrow_caller_xrp(
         return nullptr;
     }
 
-    auto const dirKeylet = keylet::contractDir(st->contractAddress, funder);
-    auto dir = st->view->peek(dirKeylet);
-    bool const createDir = !dir;
-    std::uint32_t const addCount = createDir ? 2 : 1;
-    if (TER const ter = checkReserve(st, funder, addCount, amt);
+    if (TER const ter = checkReserve(st, funder, 1, amt);
         ter != tesSUCCESS)
     {
         st->callbackTer = ter;
@@ -344,29 +380,16 @@ cb_escrow_caller_xrp(
         return nullptr;
     }
 
-    if (createDir)
+    auto const ownerDirIndex = nextOwnerDirIndex(st, funder);
+    if (!ownerDirIndex)
     {
-        dir = std::make_shared<SLE>(dirKeylet);
-        (*dir)[sfContractAddress] = st->contractAddress;
-        (*dir)[sfAccount] = funder;
-        (*dir)[sfContractDirCount] = 0u;
-        (*dir)[sfContractDirNextIndex] = 0u;
-        st->view->insert(dir);
-        if (TER const ter = addToOwnerDir(st, funder, dirKeylet, dir);
-            ter != tesSUCCESS)
-        {
-            st->callbackTer = ter;
-            results[0].of.i32 = -1;
-            return nullptr;
-        }
+        st->callbackTer = tecFAILED_PROCESSING;
+        results[0].of.i32 = -1;
+        return nullptr;
     }
-
-    std::uint32_t const nextIndex =
-        dir->getFieldU32(sfContractDirNextIndex);
-    uint256 const escrowID =
-        sha512Half(st->contractAddress, funder, nextIndex);
+    uint256 const escrowID = makeContractObjectID(st, funder, *ownerDirIndex);
     auto const escrowKeylet =
-        keylet::smartEscrow(st->contractAddress, escrowID);
+        keylet::smartEscrow(st->contractID, escrowID);
     if (st->view->exists(escrowKeylet))
     {
         st->callbackTer = tecFAILED_PROCESSING;
@@ -381,7 +404,7 @@ cb_escrow_caller_xrp(
 
     auto escrowSle = std::make_shared<SLE>(escrowKeylet);
     (*escrowSle)[sfSmartEscrowID] = escrowID;
-    (*escrowSle)[sfContractAddress] = st->contractAddress;
+    (*escrowSle)[sfContractID] = st->contractID;
     (*escrowSle)[sfAccount] = funder;
     escrowSle->setFieldAmount(sfAmount, amt);
     st->view->insert(escrowSle);
@@ -403,11 +426,6 @@ cb_escrow_caller_xrp(
     funderSle->setFieldAmount(
         sfBalance, funderSle->getFieldAmount(sfBalance) - amt);
     st->view->update(funderSle);
-
-    dir->setFieldU32(sfContractDirCount,
-                     dir->getFieldU32(sfContractDirCount) + 1);
-    dir->setFieldU32(sfContractDirNextIndex, nextIndex + 1);
-    st->view->update(dir);
 
     if (!writeId256(st, id_ptr, escrowID))
     {
@@ -460,7 +478,7 @@ cb_escrow_owner_xrp(
     STAmount const amt{XRPAmount{amount}};
 
     auto contractSle =
-        st->view->peek(keylet::smartContract(st->contractAddress));
+        st->view->peek(keylet::smartContract(st->contractID));
     if (!contractSle)
     {
         st->callbackTer = tecNO_ENTRY;
@@ -468,11 +486,7 @@ cb_escrow_owner_xrp(
         return nullptr;
     }
 
-    auto const dirKeylet = keylet::contractDir(st->contractAddress, funder);
-    auto dir = st->view->peek(dirKeylet);
-    bool const createDir = !dir;
-    std::uint32_t const addCount = createDir ? 2 : 1;
-    if (TER const ter = checkReserve(st, funder, addCount, amt);
+    if (TER const ter = checkReserve(st, funder, 1, amt);
         ter != tesSUCCESS)
     {
         st->callbackTer = ter;
@@ -480,29 +494,16 @@ cb_escrow_owner_xrp(
         return nullptr;
     }
 
-    if (createDir)
+    auto const ownerDirIndex = nextOwnerDirIndex(st, funder);
+    if (!ownerDirIndex)
     {
-        dir = std::make_shared<SLE>(dirKeylet);
-        (*dir)[sfContractAddress] = st->contractAddress;
-        (*dir)[sfAccount] = funder;
-        (*dir)[sfContractDirCount] = 0u;
-        (*dir)[sfContractDirNextIndex] = 0u;
-        st->view->insert(dir);
-        if (TER const ter = addToOwnerDir(st, funder, dirKeylet, dir);
-            ter != tesSUCCESS)
-        {
-            st->callbackTer = ter;
-            results[0].of.i32 = -1;
-            return nullptr;
-        }
+        st->callbackTer = tecFAILED_PROCESSING;
+        results[0].of.i32 = -1;
+        return nullptr;
     }
-
-    std::uint32_t const nextIndex =
-        dir->getFieldU32(sfContractDirNextIndex);
-    uint256 const escrowID =
-        sha512Half(st->contractAddress, funder, nextIndex);
+    uint256 const escrowID = makeContractObjectID(st, funder, *ownerDirIndex);
     auto const escrowKeylet =
-        keylet::smartEscrow(st->contractAddress, escrowID);
+        keylet::smartEscrow(st->contractID, escrowID);
     if (st->view->exists(escrowKeylet))
     {
         st->callbackTer = tecFAILED_PROCESSING;
@@ -517,7 +518,7 @@ cb_escrow_owner_xrp(
 
     auto escrowSle = std::make_shared<SLE>(escrowKeylet);
     (*escrowSle)[sfSmartEscrowID] = escrowID;
-    (*escrowSle)[sfContractAddress] = st->contractAddress;
+    (*escrowSle)[sfContractID] = st->contractID;
     (*escrowSle)[sfAccount] = funder;
     escrowSle->setFieldAmount(sfAmount, amt);
     st->view->insert(escrowSle);
@@ -539,11 +540,6 @@ cb_escrow_owner_xrp(
     funderSle->setFieldAmount(
         sfBalance, funderSle->getFieldAmount(sfBalance) - amt);
     st->view->update(funderSle);
-
-    dir->setFieldU32(sfContractDirCount,
-                     dir->getFieldU32(sfContractDirCount) + 1);
-    dir->setFieldU32(sfContractDirNextIndex, nextIndex + 1);
-    st->view->update(dir);
 
     if (!writeId256(st, id_ptr, escrowID))
     {
@@ -605,7 +601,7 @@ cb_release_escrowed_xrp(
     AccountID dest = AccountID::fromVoid(dest_addr.bytes);
 
     auto const escrowKeylet =
-        keylet::smartEscrow(st->contractAddress, escrowID);
+        keylet::smartEscrow(st->contractID, escrowID);
     auto escrowSle = st->view->peek(escrowKeylet);
     if (!escrowSle)
     {
@@ -614,7 +610,7 @@ cb_release_escrowed_xrp(
         return nullptr;
     }
 
-    if (escrowSle->getFieldH256(sfContractAddress) != st->contractAddress)
+    if (escrowSle->getFieldH256(sfContractID) != st->contractID)
     {
         st->callbackTer = tecFAILED_PROCESSING;
         results[0].of.i32 = -1;
@@ -630,7 +626,7 @@ cb_release_escrowed_xrp(
     }
 
     auto contractSle =
-        st->view->peek(keylet::smartContract(st->contractAddress));
+        st->view->peek(keylet::smartContract(st->contractID));
     if (!contractSle)
     {
         st->callbackTer = tecNO_ENTRY;
@@ -661,7 +657,6 @@ cb_release_escrowed_xrp(
     st->view->update(destSle);
 
     AccountID const owner = escrowSle->getAccountID(sfAccount);
-    auto dir = st->view->peek(keylet::contractDir(st->contractAddress, owner));
 
     if (TER const ter =
             removeFromOwnerDir(st, owner, escrowKeylet, escrowSle);
@@ -673,30 +668,6 @@ cb_release_escrowed_xrp(
     }
 
     st->view->erase(escrowSle);
-
-    if (dir)
-    {
-        std::uint32_t count = dir->getFieldU32(sfContractDirCount);
-        if (count <= 1)
-        {
-            auto const dirKeylet =
-                keylet::contractDir(st->contractAddress, owner);
-            if (TER const ter =
-                    removeFromOwnerDir(st, owner, dirKeylet, dir);
-                ter != tesSUCCESS)
-            {
-                st->callbackTer = ter;
-                results[0].of.i32 = -1;
-                return nullptr;
-            }
-            st->view->erase(dir);
-        }
-        else
-        {
-            dir->setFieldU32(sfContractDirCount, count - 1);
-            st->view->update(dir);
-        }
-    }
 
     results[0].of.i32 = 0;
     return nullptr;
@@ -744,12 +715,8 @@ cb_create_state(
     data.assign(memData(st) + data_ptr,
                 memData(st) + data_ptr + static_cast<uint32_t>(data_len));
 
-    auto const dirKeylet = keylet::contractDir(st->contractAddress, st->caller);
-    auto dir = st->view->peek(dirKeylet);
-    bool const createDir = !dir;
-    std::uint32_t const addCount = createDir ? 2 : 1;
     if (TER const ter =
-            checkReserve(st, st->caller, addCount, STAmount{XRPAmount{0}});
+            checkReserve(st, st->caller, 1, STAmount{XRPAmount{0}});
         ter != tesSUCCESS)
     {
         st->callbackTer = ter;
@@ -757,29 +724,16 @@ cb_create_state(
         return nullptr;
     }
 
-    if (createDir)
+    auto const ownerDirIndex = nextOwnerDirIndex(st, st->caller);
+    if (!ownerDirIndex)
     {
-        dir = std::make_shared<SLE>(dirKeylet);
-        (*dir)[sfContractAddress] = st->contractAddress;
-        (*dir)[sfAccount] = st->caller;
-        (*dir)[sfContractDirCount] = 0u;
-        (*dir)[sfContractDirNextIndex] = 0u;
-        st->view->insert(dir);
-        if (TER const ter = addToOwnerDir(st, st->caller, dirKeylet, dir);
-            ter != tesSUCCESS)
-        {
-            st->callbackTer = ter;
-            results[0].of.i32 = -1;
-            return nullptr;
-        }
+        st->callbackTer = tecFAILED_PROCESSING;
+        results[0].of.i32 = -1;
+        return nullptr;
     }
-
-    std::uint32_t const nextIndex =
-        dir->getFieldU32(sfContractDirNextIndex);
-    uint256 const stateID =
-        sha512Half(st->contractAddress, st->caller, nextIndex);
+    uint256 const stateID = makeContractObjectID(st, st->caller, *ownerDirIndex);
     auto const stateKeylet =
-        keylet::contractState(st->contractAddress, stateID);
+        keylet::contractState(st->contractID, stateID);
     if (st->view->exists(stateKeylet))
     {
         st->callbackTer = tecFAILED_PROCESSING;
@@ -790,7 +744,7 @@ cb_create_state(
     auto stateSle = std::make_shared<SLE>(stateKeylet);
     (*stateSle)[sfContractStateID] = stateID;
     (*stateSle)[sfAccount] = st->caller;
-    (*stateSle)[sfContractAddress] = st->contractAddress;
+    (*stateSle)[sfContractID] = st->contractID;
     stateSle->setFieldVL(sfContractStateData, data);
     st->view->insert(stateSle);
     if (TER const ter = addToOwnerDir(st, st->caller, stateKeylet, stateSle);
@@ -800,11 +754,6 @@ cb_create_state(
         results[0].of.i32 = -1;
         return nullptr;
     }
-
-    dir->setFieldU32(sfContractDirCount,
-                     dir->getFieldU32(sfContractDirCount) + 1);
-    dir->setFieldU32(sfContractDirNextIndex, nextIndex + 1);
-    st->view->update(dir);
 
     if (!writeId256(st, id_ptr, stateID))
     {
@@ -861,7 +810,7 @@ cb_get_state(
     }
 
     auto const stateKeylet =
-        keylet::contractState(st->contractAddress, stateID);
+        keylet::contractState(st->contractID, stateID);
     auto stateSle = st->view->read(stateKeylet);
     if (!stateSle)
     {
@@ -926,7 +875,7 @@ cb_set_state(
     }
 
     auto const stateKeylet =
-        keylet::contractState(st->contractAddress, stateID);
+        keylet::contractState(st->contractID, stateID);
     auto stateSle = st->view->peek(stateKeylet);
     if (!stateSle)
     {
@@ -983,7 +932,7 @@ cb_delete_state(
     }
 
     auto const stateKeylet =
-        keylet::contractState(st->contractAddress, stateID);
+        keylet::contractState(st->contractID, stateID);
     auto stateSle = st->view->peek(stateKeylet);
     if (!stateSle)
     {
@@ -992,7 +941,6 @@ cb_delete_state(
     }
 
     AccountID const owner = stateSle->getAccountID(sfAccount);
-    auto dir = st->view->peek(keylet::contractDir(st->contractAddress, owner));
 
     if (TER const ter = removeFromOwnerDir(st, owner, stateKeylet, stateSle);
         ter != tesSUCCESS)
@@ -1003,29 +951,6 @@ cb_delete_state(
     }
 
     st->view->erase(stateSle);
-
-    if (dir)
-    {
-        std::uint32_t count = dir->getFieldU32(sfContractDirCount);
-        if (count <= 1)
-        {
-            auto const dirKeylet =
-                keylet::contractDir(st->contractAddress, owner);
-            if (TER const ter = removeFromOwnerDir(st, owner, dirKeylet, dir);
-                ter != tesSUCCESS)
-            {
-                st->callbackTer = ter;
-                results[0].of.i32 = -1;
-                return nullptr;
-            }
-            st->view->erase(dir);
-        }
-        else
-        {
-            dir->setFieldU32(sfContractDirCount, count - 1);
-            st->view->update(dir);
-        }
-    }
 
     results[0].of.i32 = 0;
     return nullptr;
@@ -1288,8 +1213,8 @@ XRPAmount
 ContractCall::calculateBaseFee(ReadView const& view, STTx const& tx)
 {
     XRPAmount fixedCost{beast::zero};
-    auto const contractAddress = tx[sfContractAddress];
-    if (auto const sleContract = view.read(keylet::smartContract(contractAddress)))
+    auto const contractID = tx[sfContractID];
+    if (auto const sleContract = view.read(keylet::smartContract(contractID)))
     {
         if (sleContract->isFieldPresent(sfContractCost))
         {
@@ -1309,8 +1234,8 @@ ContractCall::calculateBaseFee(ReadView const& view, STTx const& tx)
 TER
 ContractCall::preclaim(PreclaimContext const& ctx)
 {
-    auto const contractAddress = ctx.tx[sfContractAddress];
-    auto const sleContract = ctx.view.read(keylet::smartContract(contractAddress));
+    auto const contractID = ctx.tx[sfContractID];
+    auto const sleContract = ctx.view.read(keylet::smartContract(contractID));
     if(!sleContract)
         return tecNO_ENTRY;
 
@@ -1325,8 +1250,8 @@ ContractCall::preclaim(PreclaimContext const& ctx)
 TER
 ContractCall::doApply()
 {
-    auto const contractAddress = ctx_.tx[sfContractAddress];
-    auto const sleContract = view().read(keylet::smartContract(contractAddress));
+    auto const contractID = ctx_.tx[sfContractID];
+    auto const sleContract = view().read(keylet::smartContract(contractID));
     if (!sleContract)
         return tecNO_ENTRY;
 
@@ -1336,7 +1261,7 @@ ContractCall::doApply()
 
     if (!sleContract->isFieldPresent(sfContractBalance))
     {
-        auto contractSle = view().peek(keylet::smartContract(contractAddress));
+        auto contractSle = view().peek(keylet::smartContract(contractID));
         if (!contractSle)
             return tecNO_ENTRY;
         contractSle->setFieldAmount(sfContractBalance, STAmount{XRPAmount{0}});
@@ -1347,7 +1272,7 @@ ContractCall::doApply()
     st.view = &view();
     st.caller = account_;
     st.owner = sleContract->getAccountID(sfAccount);
-    st.contractAddress = contractAddress;
+    st.contractID = contractID;
     if (ctx_.tx.isFieldPresent(sfContractParams))
     {
         st.params = ctx_.tx.getFieldVL(sfContractParams);

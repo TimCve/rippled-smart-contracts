@@ -554,7 +554,6 @@ LedgerEntryTypesMatch::visitEntry(
             case ltVAULT:
             case ltSMART_CONTRACT:
             case ltCONTRACT_STATE:
-            case ltCONTRACT_DIR:
             case ltSMART_ESCROW:
                 break;
             default:

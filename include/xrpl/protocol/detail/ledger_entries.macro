@@ -507,7 +507,7 @@ LEDGER_ENTRY(ltVAULT, 0x0084, Vault, vault, ({
     \sa keylet::smartContract
  */
 LEDGER_ENTRY(ltSMART_CONTRACT, 0x0085, SmartContract, smart_contract, ({
-    {sfContractAddress,      soeREQUIRED},
+    {sfContractID,           soeREQUIRED},
     {sfAccount,              soeREQUIRED},
     {sfContractCode,         soeREQUIRED},
     {sfContractCost,         soeREQUIRED},
@@ -523,21 +523,8 @@ LEDGER_ENTRY(ltSMART_CONTRACT, 0x0085, SmartContract, smart_contract, ({
 LEDGER_ENTRY(ltCONTRACT_STATE, 0x0086, ContractState, contract_state, ({
     {sfContractStateID,      soeREQUIRED},
     {sfAccount,              soeREQUIRED},
-    {sfContractAddress,      soeREQUIRED},
+    {sfContractID,           soeREQUIRED},
     {sfContractStateData,    soeREQUIRED},
-    {sfOwnerNode,            soeREQUIRED},
-    {sfPreviousTxnID,        soeREQUIRED},
-    {sfPreviousTxnLgrSeq,    soeREQUIRED},
-}))
-
-/** Smart contract per-account directory.
-    \sa keylet::contractDir
- */
-LEDGER_ENTRY(ltCONTRACT_DIR, 0x0087, ContractDir, contract_dir, ({
-    {sfContractAddress,      soeREQUIRED},
-    {sfAccount,              soeREQUIRED},
-    {sfContractDirCount,     soeREQUIRED},
-    {sfContractDirNextIndex, soeREQUIRED},
     {sfOwnerNode,            soeREQUIRED},
     {sfPreviousTxnID,        soeREQUIRED},
     {sfPreviousTxnLgrSeq,    soeREQUIRED},
@@ -548,7 +535,7 @@ LEDGER_ENTRY(ltCONTRACT_DIR, 0x0087, ContractDir, contract_dir, ({
  */
 LEDGER_ENTRY(ltSMART_ESCROW, 0x0088, SmartEscrow, smart_escrow, ({
     {sfSmartEscrowID,        soeREQUIRED},
-    {sfContractAddress,      soeREQUIRED},
+    {sfContractID,           soeREQUIRED},
     {sfAccount,              soeREQUIRED},
     {sfAmount,               soeREQUIRED},
     {sfOwnerNode,            soeREQUIRED},

@@ -1167,12 +1167,12 @@ ContractDeploy::doApply()
             return tecINSUFFICIENT_RESERVE;
     }
 
-    auto const contractAddress = sha512Half(ctx_.tx.getTransactionID());
-    Keylet const contractKeylet = keylet::smartContract(contractAddress);
+    auto const contractID = sha512Half(ctx_.tx.getTransactionID());
+    Keylet const contractKeylet = keylet::smartContract(contractID);
 
     auto sleContract = std::make_shared<SLE>(contractKeylet);
     (*sleContract)[sfAccount] = account_;
-    (*sleContract)[sfContractAddress] = contractAddress;
+    (*sleContract)[sfContractID] = contractID;
     auto const& code = ctx_.tx.getFieldVL(sfContractCode);
     std::uint64_t contractCost = 0;
     std::string meterError;
@@ -1199,7 +1199,7 @@ ContractDeploy::doApply()
     ctx_.view().update(sleOwner);
 
     JLOG(ctx_.journal.trace())
-        << "Smart contract deployed with address " << to_string(contractAddress);
+        << "Smart contract deployed with ID " << to_string(contractID);
 
     return tesSUCCESS;
 }

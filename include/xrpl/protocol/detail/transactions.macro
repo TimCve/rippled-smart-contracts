@@ -530,7 +530,7 @@ TRANSACTION(ttCONTRACT_DEPLOY, 1001, ContractDeploy, Delegation::notDelegatable,
 }))
 
 TRANSACTION(ttCONTRACT_CALL, 1002, ContractCall, Delegation::delegatable, ({
-    {sfContractAddress, soeREQUIRED},
+    {sfContractID, soeREQUIRED},
     {sfContractStateID, soeOPTIONAL},
     {sfContractParams, soeOPTIONAL},
     {sfContractOpt, soeOPTIONAL},
