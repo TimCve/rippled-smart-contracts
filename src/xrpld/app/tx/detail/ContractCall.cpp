@@ -891,6 +891,32 @@ cb_params_passed(
 }
 
 wasm_trap_t*
+cb_get_ledger_timestamp(
+    void* env,
+    wasmtime_caller_t* caller,
+    wasmtime_val_t const* args,
+    std::size_t nargs,
+    wasmtime_val_t* results,
+    std::size_t nresults)
+{
+    auto* st = reinterpret_cast<HostState*>(env);
+    if (nargs != 0)
+        return makeTrap("getLedgerTimestamp signature mismatch");
+    if (nresults != 1 || results[0].kind != WASMTIME_I32)
+        return makeTrap("getLedgerTimestamp returns i32");
+
+    auto const closeTimeCount =
+        static_cast<std::int64_t>(
+            st->view->parentCloseTime().time_since_epoch().count());
+    auto const clamped = std::clamp<std::int64_t>(
+        closeTimeCount,
+        0,
+        std::numeric_limits<std::int32_t>::max());
+    results[0].of.i32 = static_cast<std::int32_t>(clamped);
+    return nullptr;
+}
+
+wasm_trap_t*
 cb_loop_guard(
     void* env,
     wasmtime_caller_t* caller,
@@ -951,10 +977,11 @@ enforceImportPolicy(wasmtime_module_t const* module, beast::Journal j)
 
         bool allowed =
             nameEq(name, "getCallerAddr") || nameEq(name, "getOwnerAddr") ||
+            nameEq(name, "getLedgerTimestamp") ||
             nameEq(name, "lockCallerXRP") || nameEq(name, "lockOwnerXRP") ||
             nameEq(name, "unlockXRP") || nameEq(name, "createSmartObject") ||
-            nameEq(name, "getSmartObject") || nameEq(name, "deleteSmartObject") || 
-            nameEq(name, "setSmartObject") || nameEq(name, "getParams") || 
+            nameEq(name, "getSmartObject") || nameEq(name, "deleteSmartObject") ||
+            nameEq(name, "setSmartObject") || nameEq(name, "getParams") ||
             nameEq(name, "paramsPassed") || nameEq(name, "_g");
         ok = policyCheck(allowed, j, "import name not allowed");
         if (!ok)
@@ -1377,6 +1404,22 @@ ContractCall::doApply()
         wasmtime_func_t f = makeFunc(wctx, ty, cb_params_passed, &st);
         wasm_functype_delete(ty);
         if (!defineFunc(linker, wctx, SC_HOST_MOD, "paramsPassed", f, j_))
+        {
+            return finish(tecFAILED_PROCESSING);
+        }
+    }
+
+    {
+        wasm_valtype_t* r[1] = {wasm_valtype_new_i32()};
+        wasm_valtype_vec_t params;
+        wasm_valtype_vec_t results;
+        wasm_valtype_vec_new(&params, 0, nullptr);
+        wasm_valtype_vec_new(&results, 1, r);
+        wasm_functype_t* ty = wasm_functype_new(&params, &results);
+
+        wasmtime_func_t f = makeFunc(wctx, ty, cb_get_ledger_timestamp, &st);
+        wasm_functype_delete(ty);
+        if (!defineFunc(linker, wctx, SC_HOST_MOD, "getLedgerTimestamp", f, j_))
         {
             return finish(tecFAILED_PROCESSING);
         }

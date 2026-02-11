@@ -149,11 +149,12 @@ findMatchingParen(std::string const& text, std::size_t openPos)
 }
 
 // Shared host-ABI import policy and metering table.
-constexpr std::array<std::pair<char const*, std::uint64_t>, 12>
+constexpr std::array<std::pair<char const*, std::uint64_t>, 13>
     kHostImportCosts{{
         {"_g", 1},
         {"getCallerAddr", 20},
         {"getOwnerAddr", 20},
+        {"getLedgerTimestamp", 20},
         {"lockCallerXRP", 80},
         {"lockOwnerXRP", 80},
         {"unlockXRP", 80},

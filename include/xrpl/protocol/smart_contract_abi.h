@@ -38,11 +38,21 @@ typedef struct PACKED
 
 #define ID256_SIZE 32u
 
+int32_t // seconds since 2000-01-01 00:00:00 UTC
+getLedgerTimestamp(void) WASM_IMPORT(SC_HOST_MOD, "getLedgerTimestamp");
+
 int32_t
 getCallerAddr(int32_t a_ptr) WASM_IMPORT(SC_HOST_MOD, "getCallerAddr");
 
 int32_t
 getOwnerAddr(int32_t a_ptr) WASM_IMPORT(SC_HOST_MOD, "getOwnerAddr");
+
+int32_t
+getParams(int32_t out_ptr, int32_t out_len)
+    WASM_IMPORT(SC_HOST_MOD, "getParams");
+
+int32_t
+paramsPassed(void) WASM_IMPORT(SC_HOST_MOD, "paramsPassed");
 
 int32_t
 lockCallerXRP(int32_t amount) WASM_IMPORT(SC_HOST_MOD, "lockCallerXRP");
@@ -68,13 +78,6 @@ deleteSmartObject(int32_t id_ptr) WASM_IMPORT(SC_HOST_MOD, "deleteSmartObject");
 int32_t
 setSmartObject(int32_t id_ptr, int32_t data_ptr, int32_t data_len)
     WASM_IMPORT(SC_HOST_MOD, "setSmartObject");
-
-int32_t
-getParams(int32_t out_ptr, int32_t out_len)
-    WASM_IMPORT(SC_HOST_MOD, "getParams");
-
-int32_t
-paramsPassed(void) WASM_IMPORT(SC_HOST_MOD, "paramsPassed");
 
 #ifdef __cplusplus
 }
