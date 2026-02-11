@@ -244,13 +244,11 @@ nextOwnerDirIndex(HostState* st, AccountID const& owner)
     if (ownerCount == std::numeric_limits<std::uint32_t>::max())
         return std::nullopt;
 
-    // Use the account's next owner-dir position as a deterministic per-account
-    // sequence surrogate now that CONTRACT_DIR has been removed.
     return ownerCount + 1;
 }
 
 uint256
-makeContractObjectID(
+makeSmartObjectID(
     HostState* st,
     AccountID const& owner,
     std::uint32_t ownerDirIndex)
@@ -601,23 +599,23 @@ cb_create_smart_object(
         results[0].of.i32 = -1;
         return nullptr;
     }
-    uint256 const stateID = makeContractObjectID(st, st->caller, *ownerDirIndex);
-    auto const stateKeylet =
-        keylet::smartObject(st->contractID, stateID);
-    if (st->view->exists(stateKeylet))
+    uint256 const smartObjectID = makeSmartObjectID(st, st->caller, *ownerDirIndex);
+    auto const smartObjectKeylet =
+        keylet::smartObject(st->contractID, smartObjectID);
+    if (st->view->exists(smartObjectKeylet))
     {
         st->callbackTer = tecFAILED_PROCESSING;
         results[0].of.i32 = -1;
         return nullptr;
     }
 
-    auto stateSle = std::make_shared<SLE>(stateKeylet);
-    (*stateSle)[sfSmartObjectID] = stateID;
-    (*stateSle)[sfAccount] = st->caller;
-    (*stateSle)[sfContractID] = st->contractID;
-    stateSle->setFieldVL(sfSmartObjectData, data);
-    st->view->insert(stateSle);
-    if (TER const ter = addToOwnerDir(st, st->caller, stateKeylet, stateSle);
+    auto smartObjectSle = std::make_shared<SLE>(smartObjectKeylet);
+    (*smartObjectSle)[sfSmartObjectID] = smartObjectID;
+    (*smartObjectSle)[sfAccount] = st->caller;
+    (*smartObjectSle)[sfContractID] = st->contractID;
+    smartObjectSle->setFieldVL(sfSmartObjectData, data);
+    st->view->insert(smartObjectSle);
+    if (TER const ter = addToOwnerDir(st, st->caller, smartObjectKeylet, smartObjectSle);
         ter != tesSUCCESS)
     {
         st->callbackTer = ter;
@@ -625,7 +623,7 @@ cb_create_smart_object(
         return nullptr;
     }
 
-    if (!writeId256(st, id_ptr, stateID))
+    if (!writeId256(st, id_ptr, smartObjectID))
     {
         st->callbackTer = tecFAILED_PROCESSING;
         results[0].of.i32 = -1;
@@ -672,23 +670,23 @@ cb_get_smart_object(
         return nullptr;
     }
 
-    uint256 stateID;
-    if (!readId256(st, id_ptr, stateID))
+    uint256 smartObjectID;
+    if (!readId256(st, id_ptr, smartObjectID))
     {
         results[0].of.i32 = -1;
         return nullptr;
     }
 
-    auto const stateKeylet =
-        keylet::smartObject(st->contractID, stateID);
-    auto stateSle = st->view->read(stateKeylet);
-    if (!stateSle)
+    auto const smartObjectKeylet =
+        keylet::smartObject(st->contractID, smartObjectID);
+    auto smartObjectSle = st->view->read(smartObjectKeylet);
+    if (!smartObjectSle)
     {
         results[0].of.i32 = -1;
         return nullptr;
     }
 
-    auto const& data = stateSle->getFieldVL(sfSmartObjectData);
+    auto const& data = smartObjectSle->getFieldVL(sfSmartObjectData);
     if (data.size() > static_cast<std::size_t>(out_len))
     {
         results[0].of.i32 = -1;
@@ -737,23 +735,23 @@ cb_set_smart_object(
         return nullptr;
     }
 
-    uint256 stateID;
-    if (!readId256(st, id_ptr, stateID))
+    uint256 smartObjectID;
+    if (!readId256(st, id_ptr, smartObjectID))
     {
         results[0].of.i32 = -1;
         return nullptr;
     }
 
-    auto const stateKeylet =
-        keylet::smartObject(st->contractID, stateID);
-    auto stateSle = st->view->peek(stateKeylet);
-    if (!stateSle)
+    auto const smartObjectKeylet =
+        keylet::smartObject(st->contractID, smartObjectID);
+    auto smartObjectSle = st->view->peek(smartObjectKeylet);
+    if (!smartObjectSle)
     {
         results[0].of.i32 = -1;
         return nullptr;
     }
 
-    if (stateSle->getAccountID(sfAccount) != st->caller)
+    if (smartObjectSle->getAccountID(sfAccount) != st->caller)
     {
         results[0].of.i32 = -1;
         return nullptr;
@@ -762,8 +760,8 @@ cb_set_smart_object(
     Blob data;
     data.assign(memData(st) + data_ptr,
                 memData(st) + data_ptr + static_cast<uint32_t>(data_len));
-    stateSle->setFieldVL(sfSmartObjectData, data);
-    st->view->update(stateSle);
+    smartObjectSle->setFieldVL(sfSmartObjectData, data);
+    st->view->update(smartObjectSle);
 
     results[0].of.i32 = 0;
     return nullptr;
@@ -794,25 +792,25 @@ cb_delete_smart_object(
         return nullptr;
     }
 
-    uint256 stateID;
-    if (!readId256(st, id_ptr, stateID))
+    uint256 smartObjectID;
+    if (!readId256(st, id_ptr, smartObjectID))
     {
         results[0].of.i32 = -1;
         return nullptr;
     }
 
-    auto const stateKeylet =
-        keylet::smartObject(st->contractID, stateID);
-    auto stateSle = st->view->peek(stateKeylet);
-    if (!stateSle)
+    auto const smartObjectKeylet =
+        keylet::smartObject(st->contractID, smartObjectID);
+    auto smartObjectSle = st->view->peek(smartObjectKeylet);
+    if (!smartObjectSle)
     {
         results[0].of.i32 = -1;
         return nullptr;
     }
 
-    AccountID const owner = stateSle->getAccountID(sfAccount);
+    AccountID const owner = smartObjectSle->getAccountID(sfAccount);
 
-    if (TER const ter = removeFromOwnerDir(st, owner, stateKeylet, stateSle);
+    if (TER const ter = removeFromOwnerDir(st, owner, smartObjectKeylet, smartObjectSle);
         ter != tesSUCCESS)
     {
         st->callbackTer = ter;
@@ -820,7 +818,7 @@ cb_delete_smart_object(
         return nullptr;
     }
 
-    st->view->erase(stateSle);
+    st->view->erase(smartObjectSle);
 
     results[0].of.i32 = 0;
     return nullptr;
