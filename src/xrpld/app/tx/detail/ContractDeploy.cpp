@@ -8,12 +8,17 @@
 #include <xrpl/protocol/digest.h>
 #include <xrpl/basics/Log.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <stdexcept>
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include <binaryen-c.h>
@@ -37,6 +42,169 @@ isNonEmptyCStr(char const* s)
 {
     return s && s[0] != '\0';
 }
+
+std::string
+normalizeFunctionName(std::string name)
+{
+    if (!name.empty() && name.front() == '$')
+        name.erase(name.begin());
+    return name;
+}
+
+std::string
+readToken(std::string const& text, std::size_t& pos)
+{
+    while (pos < text.size() &&
+           std::isspace(static_cast<unsigned char>(text[pos])))
+        ++pos;
+
+    if (pos >= text.size())
+        return {};
+
+    char const c = text[pos];
+    if (c == '(' || c == ')')
+    {
+        ++pos;
+        return std::string(1, c);
+    }
+
+    if (c == '"')
+    {
+        std::size_t start = pos++;
+        bool escaped = false;
+        while (pos < text.size())
+        {
+            char const ch = text[pos++];
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+            if (ch == '\\')
+            {
+                escaped = true;
+                continue;
+            }
+            if (ch == '"')
+                break;
+        }
+        return text.substr(start, pos - start);
+    }
+
+    std::size_t const start = pos;
+    while (pos < text.size() &&
+           !std::isspace(static_cast<unsigned char>(text[pos])) &&
+           text[pos] != '(' && text[pos] != ')')
+    {
+        ++pos;
+    }
+    return text.substr(start, pos - start);
+}
+
+std::size_t
+findMatchingParen(std::string const& text, std::size_t openPos)
+{
+    std::size_t depth = 0;
+    bool inString = false;
+    bool escaped = false;
+
+    for (std::size_t i = openPos; i < text.size(); ++i)
+    {
+        char const c = text[i];
+        if (inString)
+        {
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+            if (c == '\\')
+            {
+                escaped = true;
+                continue;
+            }
+            if (c == '"')
+                inString = false;
+            continue;
+        }
+
+        if (c == '"')
+        {
+            inString = true;
+            continue;
+        }
+
+        if (c == '(')
+            ++depth;
+        else if (c == ')')
+        {
+            if (depth == 0)
+                return std::string::npos;
+            --depth;
+            if (depth == 0)
+                return i;
+        }
+    }
+    return std::string::npos;
+}
+
+// Shared host-ABI import policy and metering table.
+constexpr std::array<std::pair<char const*, std::uint64_t>, 12>
+    kHostImportCosts{{
+        {"_g", 1},
+        {"getCallerAddr", 20},
+        {"getOwnerAddr", 20},
+        {"lockCallerXRP", 80},
+        {"lockOwnerXRP", 80},
+        {"unlockXRP", 80},
+        {"createSmartObject", 150},
+        {"getSmartObject", 100},
+        {"setSmartObject", 150},
+        {"deleteSmartObject", 120},
+        {"getParams", 30},
+        {"paramsPassed", 10},
+    }};
+
+class ModuleHandle
+{
+    BinaryenModuleRef module_ = nullptr;
+
+public:
+    ModuleHandle(void const* data, std::size_t size)
+    {
+        module_ = BinaryenModuleRead(
+            const_cast<char*>(static_cast<char const*>(data)), size);
+        if (!module_)
+            throw std::runtime_error("BinaryenModuleRead failed");
+        if (!BinaryenModuleValidate(module_))
+            throw std::runtime_error(
+                "Invalid wasm (BinaryenModuleValidate failed)");
+    }
+
+    ~ModuleHandle()
+    {
+        if (module_)
+            BinaryenModuleDispose(module_);
+    }
+
+    BinaryenModuleRef
+    get() const
+    {
+        return module_;
+    }
+
+    // Binaryen allocates text with malloc; mirror that lifetime here.
+    std::string
+    toText() const
+    {
+        char* txt = BinaryenModuleAllocateAndWriteText(module_);
+        if (!txt)
+            throw std::runtime_error("BinaryenModuleAllocateAndWriteText failed");
+        std::string out = txt;
+        std::free(txt);
+        return out;
+    }
+};
 
 BinaryenFunctionRef
 getFunctionByNameOrIndex(BinaryenModuleRef m, std::string const& nameOrIndex)
@@ -83,6 +251,26 @@ struct CostModel
     }
 };
 
+CostModel
+makeCostModel()
+{
+    CostModel cm;
+    std::string const mod = SC_HOST_MOD;
+    for (auto const& [name, cost] : kHostImportCosts)
+        cm.importCost.emplace(mod + "." + name, cost);
+    return cm;
+}
+
+std::unordered_set<std::string>
+makeAllowedHostImports()
+{
+    std::unordered_set<std::string> allowed;
+    allowed.reserve(kHostImportCosts.size());
+    for (auto const& import : kHostImportCosts)
+        allowed.emplace(import.first);
+    return allowed;
+}
+
 struct FuncInfo
 {
     BinaryenFunctionRef ref = nullptr;
@@ -113,10 +301,12 @@ getFuncInfo(BinaryenModuleRef m, std::string const& funcNameOrIndex)
     return out;
 }
 
-struct Analyzer
+// Computes conservative worst-case execution cost for a validated module.
+class Analyzer
 {
+private:
     BinaryenModuleRef m;
-    CostModel const& cm;
+    CostModel cm;
 
     enum class Mark
     {
@@ -127,10 +317,13 @@ struct Analyzer
     std::unordered_map<std::string, Mark> marks;
     std::unordered_map<std::string, std::uint64_t> memo;
 
-    Analyzer(BinaryenModuleRef mod, CostModel const& model) : m(mod), cm(model)
+public:
+    Analyzer(BinaryenModuleRef mod, CostModel model)
+        : m(mod), cm(std::move(model))
     {
     }
 
+private:
     struct Outcomes
     {
         bool canContinue = false;
@@ -277,6 +470,7 @@ struct Analyzer
         return r;
     }
 
+public:
     std::uint64_t
     costFunctionWorst(std::string const& funcNameOrIndex)
     {
@@ -312,6 +506,7 @@ struct Analyzer
         return cost;
     }
 
+private:
     static std::vector<BinaryenExpressionRef>
     blockChildren(BinaryenExpressionRef b)
     {
@@ -383,9 +578,6 @@ struct Analyzer
 
         auto id = BinaryenExpressionGetId(e);
         std::uint64_t const node = cm.base;
-
-        if (id == BinaryenCallIndirectId())
-            throw std::runtime_error("call_indirect is not allowed");
 
         if (id == BinaryenBlockId())
         {
@@ -589,9 +781,6 @@ struct Analyzer
         auto id = BinaryenExpressionGetId(e);
         std::uint64_t const node = cm.base;
 
-        if (id == BinaryenCallIndirectId())
-            throw std::runtime_error("call_indirect is not allowed");
-
         if (id == BinaryenBlockId())
         {
             std::string name = "";
@@ -773,9 +962,6 @@ struct Analyzer
         auto id = BinaryenExpressionGetId(e);
         std::uint64_t const node = cm.base;
 
-        if (id == BinaryenCallIndirectId())
-            throw std::runtime_error("call_indirect is not allowed");
-
         if (id == BinaryenBlockId())
         {
             std::string name = "";
@@ -953,6 +1139,70 @@ struct Analyzer
             return node + tCost + fCost + cCost + k;
         }
 
+        // Recurse through common scalar wrappers so nested calls are metered.
+        if (id == BinaryenUnaryId())
+        {
+            auto v = BinaryenUnaryGetValue(e);
+            return node + costExpr(v, 0, stack) + k;
+        }
+
+        if (id == BinaryenBinaryId())
+        {
+            auto l = BinaryenBinaryGetLeft(e);
+            auto r = BinaryenBinaryGetRight(e);
+            return node + costExpr(l, 0, stack) + costExpr(r, 0, stack) + k;
+        }
+
+        if (id == BinaryenLocalSetId())
+        {
+            auto v = BinaryenLocalSetGetValue(e);
+            return node + costExpr(v, 0, stack) + k;
+        }
+
+        if (id == BinaryenGlobalSetId())
+        {
+            auto v = BinaryenGlobalSetGetValue(e);
+            return node + costExpr(v, 0, stack) + k;
+        }
+
+        if (id == BinaryenLoadId())
+        {
+            auto p = BinaryenLoadGetPtr(e);
+            return node + costExpr(p, 0, stack) + k;
+        }
+
+        if (id == BinaryenStoreId())
+        {
+            auto p = BinaryenStoreGetPtr(e);
+            auto v = BinaryenStoreGetValue(e);
+            return node + costExpr(p, 0, stack) + costExpr(v, 0, stack) + k;
+        }
+
+        if (id == BinaryenDropId())
+        {
+            auto v = BinaryenDropGetValue(e);
+            return node + costExpr(v, 0, stack) + k;
+        }
+
+        if (id == BinaryenRefIsNullId())
+        {
+            auto v = BinaryenRefIsNullGetValue(e);
+            return node + costExpr(v, 0, stack) + k;
+        }
+
+        if (id == BinaryenTableGetId())
+        {
+            auto i = BinaryenTableGetGetIndex(e);
+            return node + costExpr(i, 0, stack) + k;
+        }
+
+        if (id == BinaryenTableSetId())
+        {
+            auto i = BinaryenTableSetGetIndex(e);
+            auto v = BinaryenTableSetGetValue(e);
+            return node + costExpr(i, 0, stack) + costExpr(v, 0, stack) + k;
+        }
+
         return node + k;
     }
 };
@@ -1012,6 +1262,248 @@ getEntrypointFunctionCanonicalName(BinaryenModuleRef m)
     return std::string(BinaryenFunctionGetName(f));
 }
 
+void
+validateImportPolicy(BinaryenModuleRef m)
+{
+    auto const allowed = makeAllowedHostImports();
+    BinaryenIndex const n = BinaryenGetNumFunctions(m);
+    for (BinaryenIndex i = 0; i < n; ++i)
+    {
+        BinaryenFunctionRef f = BinaryenGetFunctionByIndex(m, i);
+        char const* imod = BinaryenFunctionImportGetModule(f);
+        char const* ibase = BinaryenFunctionImportGetBase(f);
+        bool const hasImport = isNonEmptyCStr(imod) || isNonEmptyCStr(ibase);
+        if (!hasImport)
+            continue;
+
+        if (!(isNonEmptyCStr(imod) && isNonEmptyCStr(ibase)))
+            throw std::runtime_error("Malformed function import declaration");
+
+        if (std::string_view{imod} != std::string_view{SC_HOST_MOD})
+            throw std::runtime_error(
+                "imports must come only from module \"host\"");
+
+        if (allowed.find(ibase) == allowed.end())
+            throw std::runtime_error(
+                "import name not allowed: " + std::string(ibase));
+    }
+}
+
+void
+validateFeaturePolicy(BinaryenModuleRef m)
+{
+    BinaryenFeatures const enabled = BinaryenModuleGetFeatures(m);
+    // Reject feature groups that introduce non-determinism or dynamic
+    // execution/memory behavior we do not meter in contracts.
+    // In particular, TailCall covers return_call* and BulkMemory covers
+    // memory.copy/fill/init, table.copy/init, data.drop, and elem.drop.
+    std::array<std::pair<BinaryenFeatures, char const*>, 9> const disallowed{{
+        {BinaryenFeatureAtomics(), "atomics"},
+        {BinaryenFeatureRelaxedAtomics(), "relaxed atomics"},
+        {BinaryenFeatureSharedEverything(), "shared memory"},
+        {BinaryenFeatureSIMD128(), "SIMD"},
+        {BinaryenFeatureRelaxedSIMD(), "relaxed SIMD"},
+        {BinaryenFeatureExceptionHandling(), "exception handling"},
+        {BinaryenFeatureTailCall(), "tail calls"},
+        {BinaryenFeatureBulkMemory(), "bulk memory"},
+        {BinaryenFeatureBulkMemoryOpt(), "bulk memory optimization"},
+    }};
+
+    for (auto const& [feature, name] : disallowed)
+    {
+        if ((enabled & feature) != 0)
+            throw std::runtime_error(
+                "wasm feature not allowed for deterministic contracts: " +
+                std::string(name));
+    }
+}
+
+void
+validateNoStartFunction(BinaryenModuleRef m)
+{
+    if (BinaryenGetStart(m) != nullptr)
+        throw std::runtime_error(
+            "start function is not allowed for deterministic contracts");
+}
+
+void
+validateNoBannedInstructions(std::string const& wat)
+{
+    constexpr std::array<std::string_view, 7> bannedExact{
+        "memory.grow",
+        "call_indirect",
+        "call_ref",
+        "table.grow",
+        "shared",
+        "f32",
+        "f64"};
+    constexpr std::array<std::string_view, 2> bannedPrefixes{
+        "f32.", "f64."};
+    std::size_t pos = 0;
+    while (pos < wat.size())
+    {
+        std::string const token = readToken(wat, pos);
+        if (token.empty())
+            break;
+
+        for (auto const needle : bannedExact)
+        {
+            if (token == needle)
+            {
+                throw std::runtime_error(
+                    "banned instruction detected: " + std::string(needle));
+            }
+        }
+
+        for (auto const prefix : bannedPrefixes)
+        {
+            if (token.rfind(prefix, 0) == 0)
+            {
+                throw std::runtime_error(
+                    "banned instruction detected: " + std::string(token));
+            }
+        }
+    }
+}
+
+std::unordered_set<std::string>
+collectInternalFunctions(BinaryenModuleRef m)
+{
+    std::unordered_set<std::string> out;
+    BinaryenIndex const n = BinaryenGetNumFunctions(m);
+    out.reserve(n);
+
+    for (BinaryenIndex i = 0; i < n; ++i)
+    {
+        BinaryenFunctionRef f = BinaryenGetFunctionByIndex(m, i);
+        char const* imod = BinaryenFunctionImportGetModule(f);
+        char const* ibase = BinaryenFunctionImportGetBase(f);
+        if (isNonEmptyCStr(imod) && isNonEmptyCStr(ibase))
+            continue;
+        out.emplace(normalizeFunctionName(BinaryenFunctionGetName(f)));
+    }
+    return out;
+}
+
+std::unordered_map<std::string, std::unordered_set<std::string>>
+buildDirectCallGraph(
+    BinaryenModuleRef m,
+    std::string const& wat,
+    std::unordered_set<std::string> const& internalFns)
+{
+    std::unordered_map<std::string, std::unordered_set<std::string>> graph;
+    graph.reserve(internalFns.size());
+    for (auto const& f : internalFns)
+        graph.emplace(f, std::unordered_set<std::string>{});
+
+    std::size_t pos = 0;
+    while ((pos = wat.find("(func", pos)) != std::string::npos)
+    {
+        std::size_t const end = findMatchingParen(wat, pos);
+        if (end == std::string::npos)
+            throw std::runtime_error("failed to parse function body");
+
+        std::size_t headerCursor = pos + 5;
+        std::string const funcName =
+            normalizeFunctionName(readToken(wat, headerCursor));
+        if (internalFns.find(funcName) == internalFns.end())
+        {
+            pos = end + 1;
+            continue;
+        }
+
+        std::size_t cursor = pos;
+        while (cursor < end)
+        {
+            std::string const tok = readToken(wat, cursor);
+            if (tok.empty())
+                break;
+            if (tok != "(")
+                continue;
+
+            std::string const op = readToken(wat, cursor);
+            if (op != "call")
+                continue;
+
+            std::string target = normalizeFunctionName(readToken(wat, cursor));
+            if (target.empty())
+                continue;
+
+            if (isAllDigits(target))
+                target = normalizeFunctionName(getFuncInfo(m, target).canonicalName);
+
+            if (internalFns.find(target) != internalFns.end())
+                graph[funcName].emplace(std::move(target));
+        }
+
+        pos = end + 1;
+    }
+
+    return graph;
+}
+
+void
+validateNoRecursion(
+    std::unordered_map<std::string, std::unordered_set<std::string>> const& graph)
+{
+    enum class Visit
+    {
+        white,
+        gray,
+        black
+    };
+
+    std::unordered_map<std::string, Visit> marks;
+    marks.reserve(graph.size());
+    for (auto const& [f, _] : graph)
+        marks.emplace(f, Visit::white);
+
+    auto dfs = [&](auto&& self, std::string const& f) -> void {
+        Visit& v = marks[f];
+        if (v == Visit::gray)
+            throw std::runtime_error("Recursion detected at: " + f);
+        if (v == Visit::black)
+            return;
+
+        v = Visit::gray;
+        if (auto const it = graph.find(f); it != graph.end())
+        {
+            for (auto const& callee : it->second)
+                self(self, callee);
+        }
+        v = Visit::black;
+    };
+
+    for (auto const& [f, _] : graph)
+    {
+        if (marks[f] == Visit::white)
+            dfs(dfs, f);
+    }
+}
+
+void
+validateContractDeterminism(void const* data, std::size_t size)
+{
+    // Preflight-only policy scan: imports/exports, banned opcodes, recursion.
+    ModuleHandle const module{data, size};
+    BinaryenModuleRef const m = module.get();
+
+    validateImportPolicy(m);
+    validateFeaturePolicy(m);
+    validateNoStartFunction(m);
+    std::string const entrypoint =
+        normalizeFunctionName(getEntrypointFunctionCanonicalName(m));
+
+    std::string const wat = module.toText();
+    validateNoBannedInstructions(wat);
+
+    auto const internalFns = collectInternalFunctions(m);
+    if (internalFns.find(entrypoint) == internalFns.end())
+        throw std::runtime_error("entrypoint must be an internal function");
+
+    validateNoRecursion(buildDirectCallGraph(m, wat, internalFns));
+}
+
 struct MeterResult
 {
     std::string entrypoint;
@@ -1021,45 +1513,11 @@ struct MeterResult
 MeterResult
 meterContract(void const* data, std::size_t size)
 {
-    BinaryenModuleRef m = BinaryenModuleRead(
-        const_cast<char*>(static_cast<char const*>(data)),
-        static_cast<size_t>(size));
-    if (!m)
-        throw std::runtime_error("BinaryenModuleRead failed");
-
-    struct ModuleGuard
-    {
-        BinaryenModuleRef m;
-        ~ModuleGuard()
-        {
-            if (m)
-                BinaryenModuleDispose(m);
-        }
-    } guard{m};
-
-    if (!BinaryenModuleValidate(m))
-        throw std::runtime_error("Invalid wasm (BinaryenModuleValidate failed)");
-
-    CostModel cm;
-    std::string const mod = SC_HOST_MOD;
-    cm.importCost = {
-        {mod + "._g", 1},
-        {mod + ".getCallerAddr", 20},
-        {mod + ".getOwnerAddr", 20},
-        {mod + ".lockCallerXRP", 80},
-        {mod + ".lockOwnerXRP", 80},
-        {mod + ".unlockXRP", 80},
-        {mod + ".createSmartObject", 150},
-        {mod + ".getSmartObject", 100},
-        {mod + ".setSmartObject", 150},
-        {mod + ".deleteSmartObject", 120},
-        {mod + ".getParams", 30},
-        {mod + ".paramsPassed", 10},
-    };
-
-    std::string entrypoint = getEntrypointFunctionCanonicalName(m);
-
-    Analyzer az(m, cm);
+    // Metering runs only in doApply; preflight performs policy validation above.
+    ModuleHandle const module{data, size};
+    BinaryenModuleRef const m = module.get();
+    std::string const entrypoint = getEntrypointFunctionCanonicalName(m);
+    Analyzer az(m, makeCostModel());
     std::uint64_t worst = az.costFunctionWorst(entrypoint);
 
     return MeterResult{entrypoint, worst};
@@ -1085,6 +1543,24 @@ tryMeterContract(
     }
 }
 
+bool
+tryValidateContractDeterminism(
+    void const* data,
+    std::size_t size,
+    std::string& outError)
+{
+    try
+    {
+        validateContractDeterminism(data, size);
+        return true;
+    }
+    catch (std::exception const& e)
+    {
+        outError = e.what();
+        return false;
+    }
+}
+
 }  // namespace
 }  // namespace ripple
 
@@ -1093,9 +1569,9 @@ namespace ripple {
 NotTEC
 ContractDeploy::preflight(PreflightContext const& ctx)
 {
-    if(!ctx.rules.enabled(featureSmartContracts))
+    if (!ctx.rules.enabled(featureSmartContracts))
         return temDISABLED;
-    
+
     if (ctx.tx.getFlags() & tfUniversalMask)
         return temINVALID_FLAG;
 
@@ -1109,12 +1585,11 @@ ContractDeploy::preflight(PreflightContext const& ctx)
 
     {
         auto const& code = ctx.tx.getFieldVL(sfContractCode);
-        std::uint64_t cost = 0;
         std::string err;
-        if (!tryMeterContract(code.data(), code.size(), cost, err))
+        if (!tryValidateContractDeterminism(code.data(), code.size(), err))
         {
             JLOG(ctx.j.warn())
-                << "Smart contract meter failed: " << err;
+                << "Smart contract policy validation failed: " << err;
             return temMALFORMED;
         }
     }
