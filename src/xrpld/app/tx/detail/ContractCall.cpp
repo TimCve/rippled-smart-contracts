@@ -25,7 +25,6 @@
 namespace ripple {
 namespace {
 
-// TODO: check if necessary
 static_assert(sizeof(addr_t) == ADDR_SIZE, "addr_t size mismatch");
 static_assert(sizeof(id256_t) == ID256_SIZE, "id256_t size mismatch");
 

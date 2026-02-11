@@ -1,4 +1,4 @@
-#include "../include/xrpl/protocol/smart_contract_abi.h"
+#include "smart_contract_abi.h"
 #include <stdint.h>
 
 __attribute__((export_name("entrypoint")))

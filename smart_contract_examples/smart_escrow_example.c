@@ -1,4 +1,4 @@
-#include "../include/xrpl/protocol/smart_contract_abi.h"
+#include "smart_contract_abi.h"
 #include <stdint.h>
 
 typedef struct PACKED
@@ -17,16 +17,6 @@ typedef struct PACKED
     addr_t recipient;
     uint32_t amount;
 } state_t;
-
-// TODO: move into ABI and include as standard
-static int memeq(const void* a, const void* b, uint32_t n) {
-    const uint8_t* p = (const uint8_t*)a;
-    const uint8_t* q = (const uint8_t*)b;
-    for (uint32_t i = 0; i < n; ++i) {
-        if (p[i] != q[i]) return 0;
-    }
-    return 1;
-}
 
 __attribute__((export_name("entrypoint")))
 int32_t entrypoint(int64_t opt)
@@ -63,7 +53,7 @@ int32_t entrypoint(int64_t opt)
         if(getCallerAddr((int32_t)&caller) != 0)
             return -7;
 
-        if(memeq(&caller, &state.recipient, ADDR_SIZE)) {
+        if(MEMEQ(&caller, &state.recipient, ADDR_SIZE)) {
             if(unlockXRP((int32_t)state.amount, (int32_t)&caller) != 0)
                 return -9;
             
