@@ -118,6 +118,10 @@ int32_t entrypoint(int64_t opt) {
         {
             if (!addr_eq(&contract_caller, &contract_owner)) return -11;
 
+            // 1 lottery at a time restriction
+            // when lottery is finalized, contract balance goes to 0
+            if (getContractBalance() > 0) return -12;
+
             lockOwnerXRP(PRIZE);
 
             lottery_t lottery;
@@ -313,8 +317,12 @@ int32_t entrypoint(int64_t opt) {
                         }
                     }
                 }
+
+                deleteSmartObject(&page_id);
                 page_id = page.next_page_id;
             }
+
+            deleteSmartObject((int32_t)&lottery_id);
 
             if (lowest_difference < 0xFFFFFFFFFFFFFFFF)
                 unlockXRP(PRIZE, (int32_t)&winner);
