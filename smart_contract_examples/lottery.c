@@ -318,7 +318,7 @@ int32_t entrypoint(int64_t opt) {
                     }
                 }
 
-                deleteSmartObject(&page_id);
+                deleteSmartObject((int32_t)&page_id);
                 page_id = page.next_page_id;
             }
 
