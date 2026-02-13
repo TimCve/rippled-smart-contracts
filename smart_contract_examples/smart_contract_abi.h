@@ -6,47 +6,48 @@
 #define SC_HOST_MOD "host"
 
 #define WASM_IMPORT(mod, name) __attribute__((import_module(mod), import_name(name)))
-#define PACKED __attribute__((packed))
 
 #define ADDR_SIZE 20u
 #define ID256_SIZE 32u
+#define HASH256_WORDS 4u
+#define HASH256_SIZE 32u
 
-typedef struct PACKED
+typedef struct
 {
-    uint8_t bytes[20];
+    uint8_t bytes[ADDR_SIZE];
 } addr_t;
 
-typedef struct PACKED
+typedef struct
 {
-    uint8_t bytes[32];
+    uint8_t bytes[ID256_SIZE];
 } id256_t;
+
+typedef struct
+{
+    uint64_t words[HASH256_WORDS];
+} hash256_t;
 
 void
 _g(int32_t id, int32_t max_iters) WASM_IMPORT(SC_HOST_MOD, "_g");
 
-#define MEMEQ(a, b, n) \
-    ({ \
-        const uint8_t* _a = (const uint8_t*)(a); \
-        const uint8_t* _b = (const uint8_t*)(b); \
-        uint32_t _n = (uint32_t)(n); \
-        int _eq = 1; \
-        for (uint32_t _i = 0; _i < _n; ++_i) { \
-            if (_a[_i] != _b[_i]) { \
-                _eq = 0; \
-                break; \
-            } \
-        } \
-        _eq; \
-    })
-
 int32_t  // seconds since 2000-01-01 00:00:00 UTC
 getLedgerTimestamp(void) WASM_IMPORT(SC_HOST_MOD, "getLedgerTimestamp");
 
-int32_t
+void
+sha256(int32_t data_ptr, int32_t data_len, int32_t out_ptr)
+    WASM_IMPORT(SC_HOST_MOD, "sha256");
+
+void
 getCallerAddr(int32_t a_ptr) WASM_IMPORT(SC_HOST_MOD, "getCallerAddr");
 
-int32_t
+void
 getOwnerAddr(int32_t a_ptr) WASM_IMPORT(SC_HOST_MOD, "getOwnerAddr");
+
+void
+getContractId(int32_t id_ptr) WASM_IMPORT(SC_HOST_MOD, "getContractId");
+
+int64_t
+getContractBalance(void) WASM_IMPORT(SC_HOST_MOD, "getContractBalance");
 
 int32_t
 getParams(int32_t out_ptr, int32_t out_len)
@@ -55,28 +56,33 @@ getParams(int32_t out_ptr, int32_t out_len)
 int32_t
 paramsPassed(void) WASM_IMPORT(SC_HOST_MOD, "paramsPassed");
 
-int32_t
+void
 lockCallerXRP(int32_t amount) WASM_IMPORT(SC_HOST_MOD, "lockCallerXRP");
 
-int32_t
+void
 lockOwnerXRP(int32_t amount) WASM_IMPORT(SC_HOST_MOD, "lockOwnerXRP");
 
-int32_t
+void
 unlockXRP(int32_t amount, int32_t account_ptr)
     WASM_IMPORT(SC_HOST_MOD, "unlockXRP");
 
-int32_t
+void
 createSmartObject(int32_t data_ptr, int32_t data_len, int32_t id_ptr)
     WASM_IMPORT(SC_HOST_MOD, "createSmartObject");
 
 int32_t
+// OWNER ADDRESS (20 bytes) + DATA
 getSmartObject(int32_t id_ptr, int32_t out_ptr, int32_t out_len)
     WASM_IMPORT(SC_HOST_MOD, "getSmartObject");
 
 int32_t
+getSmartObjectData(int32_t id_ptr, int32_t out_ptr, int32_t out_len)
+    WASM_IMPORT(SC_HOST_MOD, "getSmartObjectData");
+
+void
 deleteSmartObject(int32_t id_ptr) WASM_IMPORT(SC_HOST_MOD, "deleteSmartObject");
 
-int32_t
+void
 setSmartObject(int32_t id_ptr, int32_t data_ptr, int32_t data_len)
     WASM_IMPORT(SC_HOST_MOD, "setSmartObject");
 

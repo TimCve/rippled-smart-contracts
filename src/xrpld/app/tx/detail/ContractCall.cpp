@@ -27,6 +27,7 @@ namespace {
 
 static_assert(sizeof(addr_t) == ADDR_SIZE, "addr_t size mismatch");
 static_assert(sizeof(id256_t) == ID256_SIZE, "id256_t size mismatch");
+static_assert(sizeof(hash256_t) == HASH256_SIZE, "hash256_t size mismatch");
 
 void
 logWasmtimeError(beast::Journal j, wasmtime_error_t* err)
@@ -125,6 +126,14 @@ struct HostState
     TER callbackTer = tesSUCCESS;
     std::unordered_map<std::int32_t, GuardState> guards;
 };
+
+wasm_trap_t*
+failCallback(HostState* st, TER ter, char const* msg)
+{
+    if (st->callbackTer == tesSUCCESS)
+        st->callbackTer = ter;
+    return makeTrap(msg);
+}
 
 uint8_t* // get pointer to smart contract memory
 memData(HostState* st)
@@ -273,21 +282,17 @@ cb_get_caller_addr(
     auto* st = reinterpret_cast<HostState*>(env);
     if (nargs != 1 || args[0].kind != WASMTIME_I32)
         return makeTrap("get_caller signature mismatch");
-    if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("get_caller returns i32");
+    if (nresults != 0)
+        return makeTrap("get_caller returns void");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
     uint32_t a_ptr = static_cast<uint32_t>(args[0].of.i32);
     std::size_t msz = memSize(st);
     if (static_cast<uint64_t>(a_ptr) + ADDR_SIZE > msz)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecFAILED_PROCESSING, "getCallerAddr OOB write");
 
     std::memcpy(memData(st) + a_ptr, st->caller.data(), ADDR_SIZE);
-    results[0].of.i32 = 0;
     return nullptr;
 }
 
@@ -303,21 +308,70 @@ cb_get_owner_addr(
     auto* st = reinterpret_cast<HostState*>(env);
     if (nargs != 1 || args[0].kind != WASMTIME_I32)
         return makeTrap("get_owner signature mismatch");
-    if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("get_owner returns i32");
+    if (nresults != 0)
+        return makeTrap("get_owner returns void");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
     uint32_t a_ptr = static_cast<uint32_t>(args[0].of.i32);
     std::size_t msz = memSize(st);
     if (static_cast<uint64_t>(a_ptr) + ADDR_SIZE > msz)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecFAILED_PROCESSING, "getOwnerAddr OOB write");
 
     std::memcpy(memData(st) + a_ptr, st->owner.data(), ADDR_SIZE);
-    results[0].of.i32 = 0;
+    return nullptr;
+}
+
+wasm_trap_t*
+cb_get_contract_id(
+    void* env,
+    wasmtime_caller_t* caller,
+    wasmtime_val_t const* args,
+    std::size_t nargs,
+    wasmtime_val_t* results,
+    std::size_t nresults)
+{
+    auto* st = reinterpret_cast<HostState*>(env);
+    if (nargs != 1 || args[0].kind != WASMTIME_I32)
+        return makeTrap("getContractId signature mismatch");
+    if (nresults != 0)
+        return makeTrap("getContractId returns void");
+    if (!st->have_memory)
+        return makeTrap("guest memory not available");
+
+    uint32_t id_ptr = static_cast<uint32_t>(args[0].of.i32);
+    std::size_t msz = memSize(st);
+    if (static_cast<uint64_t>(id_ptr) + ID256_SIZE > msz)
+        return failCallback(st, tecFAILED_PROCESSING, "getContractId OOB write");
+
+    std::memcpy(memData(st) + id_ptr, st->contractID.data(), ID256_SIZE);
+    return nullptr;
+}
+
+wasm_trap_t*
+cb_get_contract_balance(
+    void* env,
+    wasmtime_caller_t* caller,
+    wasmtime_val_t const* args,
+    std::size_t nargs,
+    wasmtime_val_t* results,
+    std::size_t nresults)
+{
+    auto* st = reinterpret_cast<HostState*>(env);
+    if (nargs != 0)
+        return makeTrap("getContractBalance signature mismatch");
+    if (nresults != 1 || results[0].kind != WASMTIME_I64)
+        return makeTrap("getContractBalance returns i64");
+
+    auto const contractSle = st->view->read(keylet::smartContract(st->contractID));
+    if (!contractSle)
+    {
+        return failCallback(
+            st, tecNO_ENTRY, "getContractBalance contract missing");
+    }
+
+    auto const drops = contractSle->getFieldAmount(sfContractBalance).xrp().drops();
+    results[0].of.i64 = static_cast<std::int64_t>(drops);
     return nullptr;
 }
 
@@ -333,25 +387,18 @@ cb_lock_caller_xrp(
     auto* st = reinterpret_cast<HostState*>(env);
     if (nargs != 1 || args[0].kind != WASMTIME_I32)
         return makeTrap("lockCallerXRP signature mismatch");
-    if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("lockCallerXRP returns i32");
+    if (nresults != 0)
+        return makeTrap("lockCallerXRP returns void");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
     int32_t amount = args[0].of.i32;
 
     if (st->callbackTer != tesSUCCESS)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, st->callbackTer, "prior host callback failed");
 
     if (amount <= 0)
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecFAILED_PROCESSING, "lockCallerXRP amount must be > 0");
 
     AccountID const funder = st->caller;
     STAmount const amt{XRPAmount{amount}};
@@ -359,27 +406,15 @@ cb_lock_caller_xrp(
     auto contractSle =
         st->view->peek(keylet::smartContract(st->contractID));
     if (!contractSle)
-    {
-        st->callbackTer = tecNO_ENTRY;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecNO_ENTRY, "contract missing");
 
     if (TER const ter = checkReserve(st, funder, 0, amt);
         ter != tesSUCCESS)
-    {
-        st->callbackTer = ter;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, ter, "lockCallerXRP reserve check failed");
 
     auto funderSle = st->view->peek(keylet::account(funder));
     if (!funderSle)
-    {
-        st->callbackTer = tecNO_ENTRY;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecNO_ENTRY, "caller account missing");
 
     contractSle->setFieldAmount(
         sfContractBalance,
@@ -388,8 +423,6 @@ cb_lock_caller_xrp(
     funderSle->setFieldAmount(
         sfBalance, funderSle->getFieldAmount(sfBalance) - amt);
     st->view->update(funderSle);
-
-    results[0].of.i32 = 0;
     return nullptr;
 }
 
@@ -405,25 +438,18 @@ cb_lock_owner_xrp(
     auto* st = reinterpret_cast<HostState*>(env);
     if (nargs != 1 || args[0].kind != WASMTIME_I32)
         return makeTrap("lockOwnerXRP signature mismatch");
-    if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("lockOwnerXRP returns i32");
+    if (nresults != 0)
+        return makeTrap("lockOwnerXRP returns void");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
     int32_t amount = args[0].of.i32;
 
     if (st->callbackTer != tesSUCCESS)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, st->callbackTer, "prior host callback failed");
 
     if (amount <= 0)
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecFAILED_PROCESSING, "lockOwnerXRP amount must be > 0");
 
     AccountID const funder = st->owner;
     STAmount const amt{XRPAmount{amount}};
@@ -431,27 +457,15 @@ cb_lock_owner_xrp(
     auto contractSle =
         st->view->peek(keylet::smartContract(st->contractID));
     if (!contractSle)
-    {
-        st->callbackTer = tecNO_ENTRY;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecNO_ENTRY, "contract missing");
 
     if (TER const ter = checkReserve(st, funder, 0, amt);
         ter != tesSUCCESS)
-    {
-        st->callbackTer = ter;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, ter, "lockOwnerXRP reserve check failed");
 
     auto funderSle = st->view->peek(keylet::account(funder));
     if (!funderSle)
-    {
-        st->callbackTer = tecNO_ENTRY;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecNO_ENTRY, "owner account missing");
 
     contractSle->setFieldAmount(
         sfContractBalance,
@@ -460,8 +474,6 @@ cb_lock_owner_xrp(
     funderSle->setFieldAmount(
         sfBalance, funderSle->getFieldAmount(sfBalance) - amt);
     st->view->update(funderSle);
-
-    results[0].of.i32 = 0;
     return nullptr;
 }
 
@@ -478,8 +490,8 @@ cb_unlock_xrp(
     if (nargs != 2 || args[0].kind != WASMTIME_I32 ||
         args[1].kind != WASMTIME_I32)
         return makeTrap("unlockXRP signature mismatch");
-    if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("unlockXRP returns i32");
+    if (nresults != 0)
+        return makeTrap("unlockXRP returns void");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
@@ -487,17 +499,10 @@ cb_unlock_xrp(
     uint32_t dest_ptr = static_cast<uint32_t>(args[1].of.i32);
 
     if (st->callbackTer != tesSUCCESS)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, st->callbackTer, "prior host callback failed");
 
     if (amount <= 0 || !memSliceOk(st, dest_ptr, ADDR_SIZE))
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecFAILED_PROCESSING, "unlockXRP invalid args");
 
     addr_t dest_addr{};
     std::memcpy(&dest_addr, memData(st) + dest_ptr, ADDR_SIZE);
@@ -508,35 +513,21 @@ cb_unlock_xrp(
     auto contractSle =
         st->view->peek(keylet::smartContract(st->contractID));
     if (!contractSle)
-    {
-        st->callbackTer = tecNO_ENTRY;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecNO_ENTRY, "contract missing");
 
     STAmount const contractBal = contractSle->getFieldAmount(sfContractBalance);
     if (contractBal < amt)
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecUNFUNDED_PAYMENT, "contract balance too low");
 
     auto destSle = st->view->peek(keylet::account(dest));
     if (!destSle)
-    {
-        st->callbackTer = tecNO_DST;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecNO_DST, "destination account missing");
 
     contractSle->setFieldAmount(sfContractBalance, contractBal - amt);
     st->view->update(contractSle);
 
     destSle->setFieldAmount(sfBalance, destSle->getFieldAmount(sfBalance) + amt);
     st->view->update(destSle);
-
-    results[0].of.i32 = 0;
     return nullptr;
 }
 
@@ -555,8 +546,8 @@ cb_create_smart_object(
     {
         return makeTrap("createSmartObject signature mismatch");
     }
-    if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("createSmartObject returns i32");
+    if (nresults != 0)
+        return makeTrap("createSmartObject returns void");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
@@ -565,18 +556,11 @@ cb_create_smart_object(
     uint32_t id_ptr = static_cast<uint32_t>(args[2].of.i32);
 
     if (st->callbackTer != tesSUCCESS)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, st->callbackTer, "prior host callback failed");
 
     if (data_len < 0 || !memSliceOk(st, id_ptr, ID256_SIZE) ||
         !memSliceOk(st, data_ptr, static_cast<uint32_t>(data_len)))
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecFAILED_PROCESSING, "createSmartObject invalid args");
 
     Blob data;
     data.assign(memData(st) + data_ptr,
@@ -585,28 +569,16 @@ cb_create_smart_object(
     if (TER const ter =
             checkReserve(st, st->caller, 1, STAmount{XRPAmount{0}});
         ter != tesSUCCESS)
-    {
-        st->callbackTer = ter;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, ter, "createSmartObject reserve check failed");
 
     auto const ownerDirIndex = nextOwnerDirIndex(st, st->caller);
     if (!ownerDirIndex)
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecFAILED_PROCESSING, "owner directory index unavailable");
     uint256 const smartObjectID = makeSmartObjectID(st, st->caller, *ownerDirIndex);
     auto const smartObjectKeylet =
         keylet::smartObject(st->contractID, smartObjectID);
     if (st->view->exists(smartObjectKeylet))
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecFAILED_PROCESSING, "smart object already exists");
 
     auto smartObjectSle = std::make_shared<SLE>(smartObjectKeylet);
     (*smartObjectSle)[sfSmartObjectID] = smartObjectID;
@@ -616,20 +588,11 @@ cb_create_smart_object(
     st->view->insert(smartObjectSle);
     if (TER const ter = addToOwnerDir(st, st->caller, smartObjectKeylet, smartObjectSle);
         ter != tesSUCCESS)
-    {
-        st->callbackTer = ter;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, ter, "failed to insert smart object into owner dir");
 
     if (!writeId256(st, id_ptr, smartObjectID))
-    {
-        st->callbackTer = tecFAILED_PROCESSING;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecFAILED_PROCESSING, "createSmartObject failed to write id");
 
-    results[0].of.i32 = 0;
     return nullptr;
 }
 
@@ -658,38 +621,97 @@ cb_get_smart_object(
     int32_t out_len = args[2].of.i32;
 
     if (st->callbackTer != tesSUCCESS)
+        return failCallback(st, st->callbackTer, "prior host callback failed");
+
+    if (out_len < 0 || !memSliceOk(st, out_ptr, static_cast<uint32_t>(out_len)))
+        return failCallback(st, tecFAILED_PROCESSING, "getSmartObject invalid output buffer");
+
+    uint256 smartObjectID;
+    if (!readId256(st, id_ptr, smartObjectID))
+        return failCallback(st, tecFAILED_PROCESSING, "getSmartObject invalid object id pointer");
+
+    auto const smartObjectKeylet =
+        keylet::smartObject(st->contractID, smartObjectID);
+    auto smartObjectSle = st->view->read(smartObjectKeylet);
+    if (!smartObjectSle)
+        return failCallback(st, tecNO_ENTRY, "getSmartObject missing object");
+
+    auto const& data = smartObjectSle->getFieldVL(sfSmartObjectData);
+    std::size_t const totalSize = ADDR_SIZE + data.size();
+    if (totalSize > static_cast<std::size_t>(out_len))
+        return failCallback(st, tecFAILED_PROCESSING, "getSmartObject buffer too small");
+    if (totalSize > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
     {
-        results[0].of.i32 = -1;
-        return nullptr;
+        return failCallback(
+            st, tecFAILED_PROCESSING, "getSmartObject result too large");
     }
+
+    auto* out = memData(st) + out_ptr;
+    auto const owner = smartObjectSle->getAccountID(sfAccount);
+    std::memcpy(out, owner.data(), ADDR_SIZE);
+    std::memcpy(out + ADDR_SIZE, data.data(), data.size());
+    results[0].of.i32 = static_cast<std::int32_t>(totalSize);
+    return nullptr;
+}
+
+wasm_trap_t*
+cb_get_smart_object_data(
+    void* env,
+    wasmtime_caller_t* caller,
+    wasmtime_val_t const* args,
+    std::size_t nargs,
+    wasmtime_val_t* results,
+    std::size_t nresults)
+{
+    auto* st = reinterpret_cast<HostState*>(env);
+    if (nargs != 3 || args[0].kind != WASMTIME_I32 ||
+        args[1].kind != WASMTIME_I32 || args[2].kind != WASMTIME_I32)
+    {
+        return makeTrap("getSmartObjectData signature mismatch");
+    }
+    if (nresults != 1 || results[0].kind != WASMTIME_I32)
+        return makeTrap("getSmartObjectData returns i32");
+    if (!st->have_memory)
+        return makeTrap("guest memory not available");
+
+    uint32_t id_ptr = static_cast<uint32_t>(args[0].of.i32);
+    uint32_t out_ptr = static_cast<uint32_t>(args[1].of.i32);
+    int32_t out_len = args[2].of.i32;
+
+    if (st->callbackTer != tesSUCCESS)
+        return failCallback(st, st->callbackTer, "prior host callback failed");
 
     if (out_len < 0 || !memSliceOk(st, out_ptr, static_cast<uint32_t>(out_len)))
     {
-        results[0].of.i32 = -1;
-        return nullptr;
+        return failCallback(
+            st, tecFAILED_PROCESSING, "getSmartObjectData invalid output buffer");
     }
 
     uint256 smartObjectID;
     if (!readId256(st, id_ptr, smartObjectID))
     {
-        results[0].of.i32 = -1;
-        return nullptr;
+        return failCallback(
+            st,
+            tecFAILED_PROCESSING,
+            "getSmartObjectData invalid object id pointer");
     }
 
     auto const smartObjectKeylet =
         keylet::smartObject(st->contractID, smartObjectID);
     auto smartObjectSle = st->view->read(smartObjectKeylet);
     if (!smartObjectSle)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecNO_ENTRY, "getSmartObjectData missing object");
 
     auto const& data = smartObjectSle->getFieldVL(sfSmartObjectData);
     if (data.size() > static_cast<std::size_t>(out_len))
     {
-        results[0].of.i32 = -1;
-        return nullptr;
+        return failCallback(
+            st, tecFAILED_PROCESSING, "getSmartObjectData buffer too small");
+    }
+    if (data.size() > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()))
+    {
+        return failCallback(
+            st, tecFAILED_PROCESSING, "getSmartObjectData result too large");
     }
 
     std::memcpy(memData(st) + out_ptr, data.data(), data.size());
@@ -712,8 +734,8 @@ cb_set_smart_object(
     {
         return makeTrap("setSmartObject signature mismatch");
     }
-    if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("setSmartObject returns i32");
+    if (nresults != 0)
+        return makeTrap("setSmartObject returns void");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
@@ -722,47 +744,27 @@ cb_set_smart_object(
     int32_t data_len = args[2].of.i32;
 
     if (st->callbackTer != tesSUCCESS)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, st->callbackTer, "prior host callback failed");
 
     if (data_len < 0 ||
         !memSliceOk(st, data_ptr, static_cast<uint32_t>(data_len)))
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecFAILED_PROCESSING, "setSmartObject invalid input buffer");
 
     uint256 smartObjectID;
     if (!readId256(st, id_ptr, smartObjectID))
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecFAILED_PROCESSING, "setSmartObject invalid object id pointer");
 
     auto const smartObjectKeylet =
         keylet::smartObject(st->contractID, smartObjectID);
     auto smartObjectSle = st->view->peek(smartObjectKeylet);
     if (!smartObjectSle)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
-
-    if (smartObjectSle->getAccountID(sfAccount) != st->caller)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecNO_ENTRY, "setSmartObject missing object");
 
     Blob data;
     data.assign(memData(st) + data_ptr,
                 memData(st) + data_ptr + static_cast<uint32_t>(data_len));
     smartObjectSle->setFieldVL(sfSmartObjectData, data);
     st->view->update(smartObjectSle);
-
-    results[0].of.i32 = 0;
     return nullptr;
 }
 
@@ -778,48 +780,33 @@ cb_delete_smart_object(
     auto* st = reinterpret_cast<HostState*>(env);
     if (nargs != 1 || args[0].kind != WASMTIME_I32)
         return makeTrap("deleteSmartObject signature mismatch");
-    if (nresults != 1 || results[0].kind != WASMTIME_I32)
-        return makeTrap("deleteSmartObject returns i32");
+    if (nresults != 0)
+        return makeTrap("deleteSmartObject returns void");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
     uint32_t id_ptr = static_cast<uint32_t>(args[0].of.i32);
 
     if (st->callbackTer != tesSUCCESS)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, st->callbackTer, "prior host callback failed");
 
     uint256 smartObjectID;
     if (!readId256(st, id_ptr, smartObjectID))
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecFAILED_PROCESSING, "deleteSmartObject invalid object id pointer");
 
     auto const smartObjectKeylet =
         keylet::smartObject(st->contractID, smartObjectID);
     auto smartObjectSle = st->view->peek(smartObjectKeylet);
     if (!smartObjectSle)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecNO_ENTRY, "deleteSmartObject missing object");
 
     AccountID const owner = smartObjectSle->getAccountID(sfAccount);
 
     if (TER const ter = removeFromOwnerDir(st, owner, smartObjectKeylet, smartObjectSle);
         ter != tesSUCCESS)
-    {
-        st->callbackTer = ter;
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, ter, "failed to remove smart object from owner dir");
 
     st->view->erase(smartObjectSle);
-
-    results[0].of.i32 = 0;
     return nullptr;
 }
 
@@ -847,23 +834,14 @@ cb_get_params(
     int32_t out_len = args[1].of.i32;
 
     if (!st->paramsPassed)
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecFAILED_PROCESSING, "getParams called without transaction params");
 
     if (out_len < 0 ||
         !memSliceOk(st, out_ptr, static_cast<uint32_t>(out_len)))
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecFAILED_PROCESSING, "getParams invalid output buffer");
 
     if (st->params.size() > static_cast<std::size_t>(out_len))
-    {
-        results[0].of.i32 = -1;
-        return nullptr;
-    }
+        return failCallback(st, tecFAILED_PROCESSING, "getParams buffer too small");
 
     std::memcpy(memData(st) + out_ptr, st->params.data(), st->params.size());
     results[0].of.i32 = static_cast<std::int32_t>(st->params.size());
@@ -912,6 +890,43 @@ cb_get_ledger_timestamp(
         0,
         std::numeric_limits<std::int32_t>::max());
     results[0].of.i32 = static_cast<std::int32_t>(clamped);
+    return nullptr;
+}
+
+wasm_trap_t*
+cb_sha256(
+    void* env,
+    wasmtime_caller_t* caller,
+    wasmtime_val_t const* args,
+    std::size_t nargs,
+    wasmtime_val_t* results,
+    std::size_t nresults)
+{
+    auto* st = reinterpret_cast<HostState*>(env);
+    if (nargs != 3 || args[0].kind != WASMTIME_I32 ||
+        args[1].kind != WASMTIME_I32 || args[2].kind != WASMTIME_I32)
+    {
+        return makeTrap("sha256 signature mismatch");
+    }
+    if (nresults != 0)
+        return makeTrap("sha256 returns void");
+    if (!st->have_memory)
+        return makeTrap("guest memory not available");
+
+    uint32_t data_ptr = static_cast<uint32_t>(args[0].of.i32);
+    int32_t data_len = args[1].of.i32;
+    uint32_t out_ptr = static_cast<uint32_t>(args[2].of.i32);
+
+    if (data_len < 0 || !memSliceOk(st, data_ptr, static_cast<uint32_t>(data_len)) ||
+        !memSliceOk(st, out_ptr, HASH256_SIZE))
+        return failCallback(st, tecFAILED_PROCESSING, "sha256 invalid buffers");
+
+    sha256_hasher h;
+    h(memData(st) + data_ptr, static_cast<std::size_t>(data_len));
+    auto const digest = sha256_hasher::result_type(h);
+    hash256_t out{};
+    std::memcpy(out.words, digest.data(), digest.size());
+    std::memcpy(memData(st) + out_ptr, &out, sizeof(out));
     return nullptr;
 }
 
@@ -976,12 +991,15 @@ enforceImportPolicy(wasmtime_module_t const* module, beast::Journal j)
 
         bool allowed =
             nameEq(name, "getCallerAddr") || nameEq(name, "getOwnerAddr") ||
+            nameEq(name, "getContractId") || nameEq(name, "getContractBalance") ||
             nameEq(name, "getLedgerTimestamp") ||
             nameEq(name, "lockCallerXRP") || nameEq(name, "lockOwnerXRP") ||
             nameEq(name, "unlockXRP") || nameEq(name, "createSmartObject") ||
-            nameEq(name, "getSmartObject") || nameEq(name, "deleteSmartObject") ||
-            nameEq(name, "setSmartObject") || nameEq(name, "getParams") ||
-            nameEq(name, "paramsPassed") || nameEq(name, "_g");
+            nameEq(name, "getSmartObject") || nameEq(name, "getSmartObjectData") ||
+            nameEq(name, "deleteSmartObject") || nameEq(name, "setSmartObject") ||
+            nameEq(name, "sha256") ||
+            nameEq(name, "getParams") || nameEq(name, "paramsPassed") ||
+            nameEq(name, "_g");
         ok = policyCheck(allowed, j, "import name not allowed");
         if (!ok)
             break;
@@ -1215,11 +1233,10 @@ ContractCall::doApply()
 
     {
         wasm_valtype_t* p[1] = {wasm_valtype_new_i32()};
-        wasm_valtype_t* r[1] = {wasm_valtype_new_i32()};
         wasm_valtype_vec_t params;
         wasm_valtype_vec_t results;
         wasm_valtype_vec_new(&params, 1, p);
-        wasm_valtype_vec_new(&results, 1, r);
+        wasm_valtype_vec_new(&results, 0, nullptr);
         wasm_functype_t* ty = wasm_functype_new(&params, &results);
 
         wasmtime_func_t f = makeFunc(wctx, ty, cb_get_caller_addr, &st);
@@ -1232,11 +1249,10 @@ ContractCall::doApply()
 
     {
         wasm_valtype_t* p[1] = {wasm_valtype_new_i32()};
-        wasm_valtype_t* r[1] = {wasm_valtype_new_i32()};
         wasm_valtype_vec_t params;
         wasm_valtype_vec_t results;
         wasm_valtype_vec_new(&params, 1, p);
-        wasm_valtype_vec_new(&results, 1, r);
+        wasm_valtype_vec_new(&results, 0, nullptr);
         wasm_functype_t* ty = wasm_functype_new(&params, &results);
 
         wasmtime_func_t f = makeFunc(wctx, ty, cb_get_owner_addr, &st);
@@ -1249,11 +1265,42 @@ ContractCall::doApply()
 
     {
         wasm_valtype_t* p[1] = {wasm_valtype_new_i32()};
-        wasm_valtype_t* r[1] = {wasm_valtype_new_i32()};
         wasm_valtype_vec_t params;
         wasm_valtype_vec_t results;
         wasm_valtype_vec_new(&params, 1, p);
+        wasm_valtype_vec_new(&results, 0, nullptr);
+        wasm_functype_t* ty = wasm_functype_new(&params, &results);
+
+        wasmtime_func_t f = makeFunc(wctx, ty, cb_get_contract_id, &st);
+        wasm_functype_delete(ty);
+        if (!defineFunc(linker, wctx, SC_HOST_MOD, "getContractId", f, j_))
+        {
+            return finish(tecFAILED_PROCESSING);
+        }
+    }
+
+    {
+        wasm_valtype_t* r[1] = {wasm_valtype_new_i64()};
+        wasm_valtype_vec_t params;
+        wasm_valtype_vec_t results;
+        wasm_valtype_vec_new(&params, 0, nullptr);
         wasm_valtype_vec_new(&results, 1, r);
+        wasm_functype_t* ty = wasm_functype_new(&params, &results);
+
+        wasmtime_func_t f = makeFunc(wctx, ty, cb_get_contract_balance, &st);
+        wasm_functype_delete(ty);
+        if (!defineFunc(linker, wctx, SC_HOST_MOD, "getContractBalance", f, j_))
+        {
+            return finish(tecFAILED_PROCESSING);
+        }
+    }
+
+    {
+        wasm_valtype_t* p[1] = {wasm_valtype_new_i32()};
+        wasm_valtype_vec_t params;
+        wasm_valtype_vec_t results;
+        wasm_valtype_vec_new(&params, 1, p);
+        wasm_valtype_vec_new(&results, 0, nullptr);
         wasm_functype_t* ty = wasm_functype_new(&params, &results);
 
         wasmtime_func_t f = makeFunc(wctx, ty, cb_lock_caller_xrp, &st);
@@ -1266,11 +1313,10 @@ ContractCall::doApply()
 
     {
         wasm_valtype_t* p[1] = {wasm_valtype_new_i32()};
-        wasm_valtype_t* r[1] = {wasm_valtype_new_i32()};
         wasm_valtype_vec_t params;
         wasm_valtype_vec_t results;
         wasm_valtype_vec_new(&params, 1, p);
-        wasm_valtype_vec_new(&results, 1, r);
+        wasm_valtype_vec_new(&results, 0, nullptr);
         wasm_functype_t* ty = wasm_functype_new(&params, &results);
 
         wasmtime_func_t f = makeFunc(wctx, ty, cb_lock_owner_xrp, &st);
@@ -1283,11 +1329,10 @@ ContractCall::doApply()
 
     {
         wasm_valtype_t* p[2] = {wasm_valtype_new_i32(), wasm_valtype_new_i32()};
-        wasm_valtype_t* r[1] = {wasm_valtype_new_i32()};
         wasm_valtype_vec_t params;
         wasm_valtype_vec_t results;
         wasm_valtype_vec_new(&params, 2, p);
-        wasm_valtype_vec_new(&results, 1, r);
+        wasm_valtype_vec_new(&results, 0, nullptr);
         wasm_functype_t* ty = wasm_functype_new(&params, &results);
 
         wasmtime_func_t f = makeFunc(wctx, ty, cb_unlock_xrp, &st);
@@ -1303,11 +1348,10 @@ ContractCall::doApply()
             wasm_valtype_new_i32(),
             wasm_valtype_new_i32(),
             wasm_valtype_new_i32()};
-        wasm_valtype_t* r[1] = {wasm_valtype_new_i32()};
         wasm_valtype_vec_t params;
         wasm_valtype_vec_t results;
         wasm_valtype_vec_new(&params, 3, p);
-        wasm_valtype_vec_new(&results, 1, r);
+        wasm_valtype_vec_new(&results, 0, nullptr);
         wasm_functype_t* ty = wasm_functype_new(&params, &results);
 
         wasmtime_func_t f = makeFunc(wctx, ty, cb_create_smart_object, &st);
@@ -1350,6 +1394,25 @@ ContractCall::doApply()
         wasm_valtype_vec_new(&results, 1, r);
         wasm_functype_t* ty = wasm_functype_new(&params, &results);
 
+        wasmtime_func_t f = makeFunc(wctx, ty, cb_get_smart_object_data, &st);
+        wasm_functype_delete(ty);
+        if (!defineFunc(linker, wctx, SC_HOST_MOD, "getSmartObjectData", f, j_))
+        {
+            return finish(tecFAILED_PROCESSING);
+        }
+    }
+
+    {
+        wasm_valtype_t* p[3] = {
+            wasm_valtype_new_i32(),
+            wasm_valtype_new_i32(),
+            wasm_valtype_new_i32()};
+        wasm_valtype_vec_t params;
+        wasm_valtype_vec_t results;
+        wasm_valtype_vec_new(&params, 3, p);
+        wasm_valtype_vec_new(&results, 0, nullptr);
+        wasm_functype_t* ty = wasm_functype_new(&params, &results);
+
         wasmtime_func_t f = makeFunc(wctx, ty, cb_set_smart_object, &st);
         wasm_functype_delete(ty);
         if (!defineFunc(linker, wctx, SC_HOST_MOD, "setSmartObject", f, j_))
@@ -1360,11 +1423,10 @@ ContractCall::doApply()
 
     {
         wasm_valtype_t* p[1] = {wasm_valtype_new_i32()};
-        wasm_valtype_t* r[1] = {wasm_valtype_new_i32()};
         wasm_valtype_vec_t params;
         wasm_valtype_vec_t results;
         wasm_valtype_vec_new(&params, 1, p);
-        wasm_valtype_vec_new(&results, 1, r);
+        wasm_valtype_vec_new(&results, 0, nullptr);
         wasm_functype_t* ty = wasm_functype_new(&params, &results);
 
         wasmtime_func_t f = makeFunc(wctx, ty, cb_delete_smart_object, &st);
@@ -1419,6 +1481,25 @@ ContractCall::doApply()
         wasmtime_func_t f = makeFunc(wctx, ty, cb_get_ledger_timestamp, &st);
         wasm_functype_delete(ty);
         if (!defineFunc(linker, wctx, SC_HOST_MOD, "getLedgerTimestamp", f, j_))
+        {
+            return finish(tecFAILED_PROCESSING);
+        }
+    }
+
+    {
+        wasm_valtype_t* p[3] = {
+            wasm_valtype_new_i32(),
+            wasm_valtype_new_i32(),
+            wasm_valtype_new_i32()};
+        wasm_valtype_vec_t params;
+        wasm_valtype_vec_t results;
+        wasm_valtype_vec_new(&params, 3, p);
+        wasm_valtype_vec_new(&results, 0, nullptr);
+        wasm_functype_t* ty = wasm_functype_new(&params, &results);
+
+        wasmtime_func_t f = makeFunc(wctx, ty, cb_sha256, &st);
+        wasm_functype_delete(ty);
+        if (!defineFunc(linker, wctx, SC_HOST_MOD, "sha256", f, j_))
         {
             return finish(tecFAILED_PROCESSING);
         }
@@ -1480,12 +1561,23 @@ ContractCall::doApply()
     wasmtime_val_t results[1];
     results[0].kind = WASMTIME_I32;
 
-    if (TER const ter =
-            logWasmtimeFailure(
-                j_, wasmtime_func_call(wctx, &entry, args, 1, results, 1, &trap), trap);
-        ter != tesSUCCESS)
+    wasmtime_error_t* callErr =
+        wasmtime_func_call(wctx, &entry, args, 1, results, 1, &trap);
+    if (callErr || trap)
     {
-        return finish(ter);
+        if (st.callbackTer != tesSUCCESS)
+        {
+            // Preserve callback-specific TER while still surfacing trap details.
+            logWasmtimeError(j_, callErr);
+            logWasmtimeTrap(j_, trap);
+            return finish(st.callbackTer);
+        }
+
+        if (TER const ter = logWasmtimeFailure(j_, callErr, trap);
+            ter != tesSUCCESS)
+        {
+            return finish(ter);
+        }
     }
 
     if (st.callbackTer != tesSUCCESS)
