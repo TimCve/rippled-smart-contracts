@@ -7,7 +7,7 @@ Commit Round:
 - commit window opens for 24 hours
 - each participant makes a commit: sha256(AccountID, ContractID, SECRET_64)
   (commits stored in "paginated linked list" implemented via ledger objects)
-- along with commit, each participant locks 100 XRP (95 XRP out of this is a deposit)
+- to submit a commit, each participant locks 5 XRP entry fee + 100 XRP deposit
 - commit window closes
 Reveal Round:
 - reveal window opens for 24 hours
