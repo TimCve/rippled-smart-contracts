@@ -203,7 +203,9 @@ int32_t entrypoint(int64_t opt) {
             int32_t sz = getSmartObjectData((int32_t)&params.lottery_id, (int32_t)&lottery, sizeof(lottery_t));
             if (sz != sizeof(lottery_t)) return -33;
 
-            if (getLedgerTimestamp() > lottery.start_timestamp + COMMIT_WINDOW_DURATION + REVEAL_WINDOW_DURATION)
+            int32_t ledger_timestamp = getLedgerTimestamp();
+            if (ledger_timestamp > lottery.start_timestamp + COMMIT_WINDOW_DURATION + REVEAL_WINDOW_DURATION ||
+                ledger_timestamp < lottery.start_timestamp + COMMIT_WINDOW_DURATION)
                 return -34;
 
             uint8_t secret_revealed = FALSE;
