@@ -20,24 +20,28 @@
 #define HASH256_WORDS 4u
 #define HASH256_SIZE 32u
 
-typedef struct PACKED
+typedef struct
 {
     uint8_t bytes[ADDR_SIZE];
 } addr_t;
 
-typedef struct PACKED
+typedef struct
 {
     uint8_t bytes[ID256_SIZE];
 } id256_t;
 
-typedef struct PACKED
+typedef struct
 {
     uint64_t words[HASH256_WORDS];
 } hash256_t;
 
+// Size/alignment checks catch ABI drift and prevent unaligned uint64_t access.
 _Static_assert(sizeof(addr_t) == ADDR_SIZE, "addr_t size mismatch");
 _Static_assert(sizeof(id256_t) == ID256_SIZE, "id256_t size mismatch");
 _Static_assert(sizeof(hash256_t) == HASH256_SIZE, "hash256_t size mismatch");
+_Static_assert(
+    _Alignof(hash256_t) >= _Alignof(uint64_t),
+    "hash256_t alignment must allow uint64_t access");
 
 void
 _g(int32_t id, int32_t max_iters) WASM_IMPORT(SC_HOST_MOD, "_g");

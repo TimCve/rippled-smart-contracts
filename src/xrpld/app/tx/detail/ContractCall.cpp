@@ -25,9 +25,13 @@
 namespace ripple {
 namespace {
 
+// host (rippled) and guest (smart contract) must agree on ABI struct layout exactly
 static_assert(sizeof(addr_t) == ADDR_SIZE, "addr_t size mismatch");
 static_assert(sizeof(id256_t) == ID256_SIZE, "id256_t size mismatch");
 static_assert(sizeof(hash256_t) == HASH256_SIZE, "hash256_t size mismatch");
+static_assert(
+    alignof(hash256_t) >= alignof(std::uint64_t),
+    "hash256_t alignment must allow uint64_t access");
 
 void
 logWasmtimeError(beast::Journal j, wasmtime_error_t* err)

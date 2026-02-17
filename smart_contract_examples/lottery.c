@@ -24,6 +24,7 @@ Pseudo-Random RNG:
 */
 
 #include "smart_contract_abi.h"
+#include <stddef.h>
 #include <stdint.h>
 
 #define GUARD(maxiter) _g(__LINE__, maxiter)
@@ -39,59 +40,74 @@ Pseudo-Random RNG:
 #define COMMIT_WINDOW_DURATION 24 * 60 * 60 // 24 hours
 #define REVEAL_WINDOW_DURATION 24 * 60 * 60 // 24 hours
 
-typedef struct PACKED {
+// Runtime participant state is intentionally NOT packed so hash256_t remains
+// naturally aligned for direct 64-bit word access.
+typedef struct {
     addr_t address;
     uint8_t revealed;
     hash256_t entry; // commit (all 256 bits) / revealed secret (first 64 bits)
 } participant_t;
 
-typedef struct PACKED {
+// Runtime page state is intentionally NOT packed for the same alignment reason.
+typedef struct {
     uint32_t filled_slots;
     participant_t participants[10];
     id256_t next_page_id;
 } participant_page_t;
 
-typedef struct PACKED {
+// Runtime lottery state is intentionally NOT packed.
+typedef struct {
     uint32_t start_timestamp;
     id256_t first_participant_page_id;
     uint64_t winning_value;
     uint8_t winning_value_determined;
 } lottery_t;
 
+// Packed on purpose: this exact byte layout is hashed for commit verification.
 typedef struct PACKED {
     addr_t account_id;
     id256_t contract_id;
     uint64_t secret;
 } commit_unhashed_t;
 
-typedef struct PACKED {
+// Runtime winner state is intentionally NOT packed.
+typedef struct {
     addr_t account_id;
     uint64_t difference;
 } winner_t;
 
+// Packed on purpose: params are serialized bytes coming from transaction input.
 typedef struct PACKED {
     id256_t lottery_id;
     hash256_t commit;
 } params2_t;
 
+// Packed on purpose: params are serialized bytes coming from transaction input.
 typedef struct PACKED {
     id256_t lottery_id;
     uint64_t secret;
 } params3_t;
 
-_Static_assert(sizeof(participant_t) == 53, "participant_t size mismatch");
-_Static_assert(sizeof(participant_page_t) == 566, "participant_page_t size mismatch");
-_Static_assert(sizeof(lottery_t) == 45, "lottery_t size mismatch");
+// Size and alignment checks guard against layout drift and unaligned uint64_t access.
+_Static_assert(sizeof(participant_t) == 56, "participant_t size mismatch");
+_Static_assert(sizeof(participant_page_t) == 600, "participant_page_t size mismatch");
+_Static_assert(sizeof(lottery_t) == 56, "lottery_t size mismatch");
 _Static_assert(sizeof(commit_unhashed_t) == 60, "commit_unhashed_t size mismatch");
-_Static_assert(sizeof(winner_t) == 28, "winner_t size mismatch");
+_Static_assert(sizeof(winner_t) == 32, "winner_t size mismatch");
 _Static_assert(sizeof(params2_t) == 64, "params2_t size mismatch");
 _Static_assert(sizeof(params3_t) == 40, "params3_t size mismatch");
+_Static_assert(
+    _Alignof(hash256_t) >= _Alignof(uint64_t),
+    "hash256_t alignment must allow uint64_t access");
+_Static_assert(
+    (offsetof(participant_t, entry) % _Alignof(uint64_t)) == 0,
+    "participant_t.entry must be uint64_t-aligned");
 
 int32_t hash256_eq(hash256_t* a, hash256_t* b) {
-    if (((uint64_t*)a)[0] == ((uint64_t*)b)[0] &&
-        ((uint64_t*)a)[1] == ((uint64_t*)b)[1] &&
-        ((uint64_t*)a)[2] == ((uint64_t*)b)[2] &&
-        ((uint64_t*)a)[3] == ((uint64_t*)b)[3])
+    if (a->words[0] == b->words[0] &&
+        a->words[1] == b->words[1] &&
+        a->words[2] == b->words[2] &&
+        a->words[3] == b->words[3])
         return TRUE;
     else return FALSE;
 }
@@ -157,6 +173,7 @@ int32_t entrypoint(int64_t opt) {
             if (!paramsPassed()) return -21;
 
             params2_t params;
+            // Read packed params with exact serialized size (no hidden padding bytes).
             int32_t got = getParams((int32_t)&params, sizeof(params2_t));
             if (got != sizeof(params2_t)) return -22;
 
@@ -164,7 +181,7 @@ int32_t entrypoint(int64_t opt) {
             int32_t sz = getSmartObjectData((int32_t)&params.lottery_id, (int32_t)&lottery, sizeof(lottery_t));
             if (sz != sizeof(lottery_t)) return -23;
 
-            if (getLedgerTimestamp() > lottery.start_timestamp + COMMIT_WINDOW_DURATION) return -24;
+            if ((uint32_t)getLedgerTimestamp() > lottery.start_timestamp + COMMIT_WINDOW_DURATION) return -24;
 
             uint8_t commit_made = FALSE;
             id256_t page_id = lottery.first_participant_page_id;
@@ -185,6 +202,7 @@ int32_t entrypoint(int64_t opt) {
                     participant_t participant;
                     participant.address = contract_caller;
                     participant.revealed = FALSE;
+                    // params2_t is packed, so commit bytes map 1:1 to input serialization.
                     participant.entry = params.commit;
                     page.participants[page.filled_slots] = participant;
                     page.filled_slots++;
@@ -204,6 +222,7 @@ int32_t entrypoint(int64_t opt) {
             if (!paramsPassed()) return -31;
 
             params3_t params;
+            // Read packed params with exact serialized size (no hidden padding bytes).
             int32_t got = getParams((int32_t)&params, sizeof(params3_t));
             if (got != sizeof(params3_t)) return -32;
 
@@ -211,7 +230,7 @@ int32_t entrypoint(int64_t opt) {
             int32_t sz = getSmartObjectData((int32_t)&params.lottery_id, (int32_t)&lottery, sizeof(lottery_t));
             if (sz != sizeof(lottery_t)) return -33;
 
-            int32_t ledger_timestamp = getLedgerTimestamp();
+            uint32_t ledger_timestamp = (uint32_t)getLedgerTimestamp();
             if (ledger_timestamp > lottery.start_timestamp + COMMIT_WINDOW_DURATION + REVEAL_WINDOW_DURATION ||
                 ledger_timestamp <= lottery.start_timestamp + COMMIT_WINDOW_DURATION)
                 return -34;
@@ -233,10 +252,12 @@ int32_t entrypoint(int64_t opt) {
                         commit_unhashed.account_id = contract_caller;
                         commit_unhashed.contract_id = contract_id;
                         commit_unhashed.secret = params.secret;
+                        // Hash packed preimage bytes to avoid hidden padding drift.
                         sha256((int32_t)&commit_unhashed, sizeof(commit_unhashed_t), (int32_t)&commit_verif);
                         if (!hash256_eq(&page.participants[j].entry, &commit_verif))
                             return -35;
-                        ((uint64_t*)&page.participants[j].entry)[0] = params.secret;
+                        // Safe 64-bit write: participant_t.entry alignment is asserted above.
+                        page.participants[j].entry.words[0] = params.secret;
                         page.participants[j].revealed = TRUE;
                         setSmartObject((int32_t)&page_id, (int32_t)&page, sizeof(participant_page_t));
                         unlockXRP(ENTRY_DEPOSIT, (int32_t)&page.participants[j].address);
@@ -263,7 +284,7 @@ int32_t entrypoint(int64_t opt) {
             int32_t sz = getSmartObjectData((int32_t)&lottery_id, (int32_t)&lottery, sizeof(lottery_t));
             if (sz != sizeof(lottery_t)) return -43;
 
-            if (getLedgerTimestamp() < lottery.start_timestamp + COMMIT_WINDOW_DURATION + REVEAL_WINDOW_DURATION)
+            if ((uint32_t)getLedgerTimestamp() < lottery.start_timestamp + COMMIT_WINDOW_DURATION + REVEAL_WINDOW_DURATION)
                 return -44;
 
             uint64_t winning_value = 0x0000000000000000;
@@ -279,7 +300,8 @@ int32_t entrypoint(int64_t opt) {
                     GUARD(PARTICIPANT_PAGE_COUNT * PARTICIPANT_PAGE_CAPACITY);
                     
                     if (page.participants[j].revealed)
-                        winning_value ^= ((uint64_t*)&page.participants[j].entry)[0];
+                        // Safe 64-bit read: participant_t.entry alignment is asserted above.
+                        winning_value ^= page.participants[j].entry.words[0];
                 }
                 page_id = page.next_page_id;
             }
@@ -302,7 +324,7 @@ int32_t entrypoint(int64_t opt) {
             int32_t sz = getSmartObjectData((int32_t)&lottery_id, (int32_t)&lottery, sizeof(lottery_t));
             if (sz != sizeof(lottery_t)) return -53;
 
-            if (getLedgerTimestamp() < lottery.start_timestamp + COMMIT_WINDOW_DURATION + REVEAL_WINDOW_DURATION)
+            if ((uint32_t)getLedgerTimestamp() < lottery.start_timestamp + COMMIT_WINDOW_DURATION + REVEAL_WINDOW_DURATION)
                 return -54;
 
             if (!lottery.winning_value_determined) return -55;
@@ -321,7 +343,8 @@ int32_t entrypoint(int64_t opt) {
                     GUARD(PARTICIPANT_PAGE_COUNT * PARTICIPANT_PAGE_CAPACITY);
                     
                     if (page.participants[j].revealed) {
-                        uint64_t difference = ((uint64_t*)&page.participants[j].entry)[0] ^ lottery.winning_value;
+                        // Safe 64-bit read: participant_t.entry alignment is asserted above.
+                        uint64_t difference = page.participants[j].entry.words[0] ^ lottery.winning_value;
                         if (difference < lowest_difference) {
                             winner = page.participants[j].address;
                             lowest_difference = difference;

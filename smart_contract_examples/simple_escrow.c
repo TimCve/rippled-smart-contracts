@@ -14,20 +14,24 @@ Escrow Claim:
 #define TRUE 1
 #define FALSE 0
 
+// Packed on purpose: params are decoded from raw transaction bytes.
 typedef struct PACKED {
     uint64_t amount;
     addr_t recipient;
 } params1_t;
 
+// Packed on purpose: params are decoded from raw transaction bytes.
 typedef struct PACKED {
     id256_t escrow_id;
 } params2_t;
 
+// Packed on purpose: persisted escrow object keeps a stable byte layout.
 typedef struct PACKED {
     addr_t recipient;
     uint64_t amount;
 } escrow_t;
 
+// Size checks catch serialization layout drift.
 _Static_assert(sizeof(params1_t) == 28, "params1_t size mismatch");
 _Static_assert(sizeof(params2_t) == 32, "params2_t size mismatch");
 _Static_assert(sizeof(escrow_t) == 28, "escrow_t size mismatch");
@@ -54,6 +58,7 @@ int32_t entrypoint(int64_t opt)
 
     if (opt == 1) { // create escrow
         params1_t params;
+        // Read packed params using exact serialized size.
         int32_t got = getParams((int32_t)&params, sizeof(params1_t));
         if(got != sizeof(params1_t)) return -2;
         
@@ -63,10 +68,12 @@ int32_t entrypoint(int64_t opt)
         lockCallerXRP((int64_t)params.amount);
 
         id256_t escrow_id;
+        // Persist packed escrow payload with deterministic byte layout.
         createSmartObject((int32_t)&escrow, sizeof(escrow_t), (int32_t)&escrow_id);
 
     } else if (opt == 2) { // claim escrow
         params2_t params;
+        // Read packed params using exact serialized size.
         int32_t got = getParams((int32_t)&params, sizeof(params2_t));
         if(got != sizeof(params2_t)) return -5;
 
