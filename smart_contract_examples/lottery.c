@@ -7,20 +7,20 @@ Commit Round:
 - commit window opens for 24 hours
 - each participant makes a commit: sha256(AccountID, ContractID, SECRET_64)
   (commits stored in "paginated linked list" implemented via ledger objects)
-- to submit a commit, each participant locks 5 XRP entry fee + 100 XRP deposit
+- to submit a commit, each participant locks 5 XRP entry fee + 50 XRP deposit
 - commit window closes
 Reveal Round:
 - reveal window opens for 24 hours
 - each participant reveals their secret
 - revealed secret is verified against commit
-- if revealed secret matches, participant is refunded 95 XRP deposit
+- if revealed secret matches, participant is refunded 50 XRP deposit
 - if revealed secret is incorrect, nothing happens (deposit stays in contract balance)
 - reveal window closes
 Pseudo-Random RNG:
 - all revealed secrets are XORed together to get winning value
 - all revealed secrets are XORed against winning value and smallest resulting
   value wins prize pool
-  (if 2 identical secrets were committed by two participants, ealier one wins)
+  (if 2 identical secrets were committed by two participants, earlier one wins)
 */
 
 #include "smart_contract_abi.h"
@@ -39,45 +39,53 @@ Pseudo-Random RNG:
 #define COMMIT_WINDOW_DURATION 24 * 60 * 60 // 24 hours
 #define REVEAL_WINDOW_DURATION 24 * 60 * 60 // 24 hours
 
-typedef struct {
+typedef struct PACKED {
     addr_t address;
     uint8_t revealed;
     hash256_t entry; // commit (all 256 bits) / revealed secret (first 64 bits)
 } participant_t;
 
-typedef struct {
+typedef struct PACKED {
     uint32_t filled_slots;
     participant_t participants[10];
     id256_t next_page_id;
 } participant_page_t;
 
-typedef struct {
+typedef struct PACKED {
     uint32_t start_timestamp;
     id256_t first_participant_page_id;
     uint64_t winning_value;
     uint8_t winning_value_determined;
 } lottery_t;
 
-typedef struct {
+typedef struct PACKED {
     addr_t account_id;
     id256_t contract_id;
     uint64_t secret;
 } commit_unhashed_t;
 
-typedef struct {
+typedef struct PACKED {
     addr_t account_id;
     uint64_t difference;
 } winner_t;
 
-typedef struct {
+typedef struct PACKED {
     id256_t lottery_id;
     hash256_t commit;
 } params2_t;
 
-typedef struct {
+typedef struct PACKED {
     id256_t lottery_id;
     uint64_t secret;
 } params3_t;
+
+_Static_assert(sizeof(participant_t) == 53, "participant_t size mismatch");
+_Static_assert(sizeof(participant_page_t) == 566, "participant_page_t size mismatch");
+_Static_assert(sizeof(lottery_t) == 45, "lottery_t size mismatch");
+_Static_assert(sizeof(commit_unhashed_t) == 60, "commit_unhashed_t size mismatch");
+_Static_assert(sizeof(winner_t) == 28, "winner_t size mismatch");
+_Static_assert(sizeof(params2_t) == 64, "params2_t size mismatch");
+_Static_assert(sizeof(params3_t) == 40, "params3_t size mismatch");
 
 int32_t hash256_eq(hash256_t* a, hash256_t* b) {
     if (((uint64_t*)a)[0] == ((uint64_t*)b)[0] &&
@@ -137,7 +145,7 @@ int32_t entrypoint(int64_t opt) {
             lottery.first_participant_page_id = page.next_page_id;
 
             lottery.winning_value = 0x0000000000000000;
-            lottery.winning_value_determined = 0;
+            lottery.winning_value_determined = FALSE;
 
             id256_t lottery_id;
             createSmartObject((int32_t)&lottery, sizeof(lottery_t), (int32_t)&lottery_id);
@@ -179,9 +187,9 @@ int32_t entrypoint(int64_t opt) {
                     participant.revealed = FALSE;
                     participant.entry = params.commit;
                     page.participants[page.filled_slots] = participant;
-                    lockCallerXRP(ENTRY_DEPOSIT + ENTRY_FEE);
-                    setSmartObject((int32_t)&page_id, (int32_t)&page, sizeof(participant_page_t));
                     page.filled_slots++;
+                    setSmartObject((int32_t)&page_id, (int32_t)&page, sizeof(participant_page_t));
+                    lockCallerXRP(ENTRY_DEPOSIT + ENTRY_FEE);
                     commit_made = TRUE;
                     break;
                 }
@@ -205,7 +213,7 @@ int32_t entrypoint(int64_t opt) {
 
             int32_t ledger_timestamp = getLedgerTimestamp();
             if (ledger_timestamp > lottery.start_timestamp + COMMIT_WINDOW_DURATION + REVEAL_WINDOW_DURATION ||
-                ledger_timestamp < lottery.start_timestamp + COMMIT_WINDOW_DURATION)
+                ledger_timestamp <= lottery.start_timestamp + COMMIT_WINDOW_DURATION)
                 return -34;
 
             uint8_t secret_revealed = FALSE;
@@ -225,7 +233,7 @@ int32_t entrypoint(int64_t opt) {
                         commit_unhashed.account_id = contract_caller;
                         commit_unhashed.contract_id = contract_id;
                         commit_unhashed.secret = params.secret;
-                        sha256((int32_t)&commit_unhashed, sizeof(hash256_t), (int32_t)&commit_verif);
+                        sha256((int32_t)&commit_unhashed, sizeof(commit_unhashed_t), (int32_t)&commit_verif);
                         if (!hash256_eq(&page.participants[j].entry, &commit_verif))
                             return -35;
                         ((uint64_t*)&page.participants[j].entry)[0] = params.secret;
@@ -277,6 +285,7 @@ int32_t entrypoint(int64_t opt) {
             }
             
             lottery.winning_value = winning_value;
+            lottery.winning_value_determined = TRUE;
             setSmartObject((int32_t)&lottery_id, (int32_t)&lottery, sizeof(lottery_t));
 
             break;
@@ -331,7 +340,7 @@ int32_t entrypoint(int64_t opt) {
 
             int64_t contract_balance = getContractBalance();
             if (contract_balance > 0)
-                unlockXRP((int32_t)contract_balance, (int32_t)&contract_owner);
+                unlockXRP(contract_balance, (int32_t)&contract_owner);
 
             break;
         }

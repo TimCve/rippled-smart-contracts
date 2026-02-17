@@ -385,20 +385,23 @@ cb_lock_caller_xrp(
     std::size_t nresults)
 {
     auto* st = reinterpret_cast<HostState*>(env);
-    if (nargs != 1 || args[0].kind != WASMTIME_I32)
+    if (nargs != 1 || args[0].kind != WASMTIME_I64)
         return makeTrap("lockCallerXRP signature mismatch");
     if (nresults != 0)
         return makeTrap("lockCallerXRP returns void");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
-    int32_t amount = args[0].of.i32;
+    std::int64_t amount = args[0].of.i64;
 
     if (st->callbackTer != tesSUCCESS)
         return failCallback(st, st->callbackTer, "prior host callback failed");
 
-    if (amount <= 0)
-        return failCallback(st, tecFAILED_PROCESSING, "lockCallerXRP amount must be > 0");
+    if (amount <= 0 || amount > static_cast<std::int64_t>(STAmount::cMaxNativeN))
+    {
+        return failCallback(
+            st, tecFAILED_PROCESSING, "lockCallerXRP invalid amount");
+    }
 
     AccountID const funder = st->caller;
     STAmount const amt{XRPAmount{amount}};
@@ -436,20 +439,23 @@ cb_lock_owner_xrp(
     std::size_t nresults)
 {
     auto* st = reinterpret_cast<HostState*>(env);
-    if (nargs != 1 || args[0].kind != WASMTIME_I32)
+    if (nargs != 1 || args[0].kind != WASMTIME_I64)
         return makeTrap("lockOwnerXRP signature mismatch");
     if (nresults != 0)
         return makeTrap("lockOwnerXRP returns void");
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
-    int32_t amount = args[0].of.i32;
+    std::int64_t amount = args[0].of.i64;
 
     if (st->callbackTer != tesSUCCESS)
         return failCallback(st, st->callbackTer, "prior host callback failed");
 
-    if (amount <= 0)
-        return failCallback(st, tecFAILED_PROCESSING, "lockOwnerXRP amount must be > 0");
+    if (amount <= 0 || amount > static_cast<std::int64_t>(STAmount::cMaxNativeN))
+    {
+        return failCallback(
+            st, tecFAILED_PROCESSING, "lockOwnerXRP invalid amount");
+    }
 
     AccountID const funder = st->owner;
     STAmount const amt{XRPAmount{amount}};
@@ -487,7 +493,7 @@ cb_unlock_xrp(
     std::size_t nresults)
 {
     auto* st = reinterpret_cast<HostState*>(env);
-    if (nargs != 2 || args[0].kind != WASMTIME_I32 ||
+    if (nargs != 2 || args[0].kind != WASMTIME_I64 ||
         args[1].kind != WASMTIME_I32)
         return makeTrap("unlockXRP signature mismatch");
     if (nresults != 0)
@@ -495,14 +501,17 @@ cb_unlock_xrp(
     if (!st->have_memory)
         return makeTrap("guest memory not available");
 
-    int32_t amount = args[0].of.i32;
+    std::int64_t amount = args[0].of.i64;
     uint32_t dest_ptr = static_cast<uint32_t>(args[1].of.i32);
 
     if (st->callbackTer != tesSUCCESS)
         return failCallback(st, st->callbackTer, "prior host callback failed");
 
-    if (amount <= 0 || !memSliceOk(st, dest_ptr, ADDR_SIZE))
+    if (amount <= 0 || amount > static_cast<std::int64_t>(STAmount::cMaxNativeN) ||
+        !memSliceOk(st, dest_ptr, ADDR_SIZE))
+    {
         return failCallback(st, tecFAILED_PROCESSING, "unlockXRP invalid args");
+    }
 
     addr_t dest_addr{};
     std::memcpy(&dest_addr, memData(st) + dest_ptr, ADDR_SIZE);
@@ -1296,7 +1305,7 @@ ContractCall::doApply()
     }
 
     {
-        wasm_valtype_t* p[1] = {wasm_valtype_new_i32()};
+        wasm_valtype_t* p[1] = {wasm_valtype_new_i64()};
         wasm_valtype_vec_t params;
         wasm_valtype_vec_t results;
         wasm_valtype_vec_new(&params, 1, p);
@@ -1312,7 +1321,7 @@ ContractCall::doApply()
     }
 
     {
-        wasm_valtype_t* p[1] = {wasm_valtype_new_i32()};
+        wasm_valtype_t* p[1] = {wasm_valtype_new_i64()};
         wasm_valtype_vec_t params;
         wasm_valtype_vec_t results;
         wasm_valtype_vec_new(&params, 1, p);
@@ -1328,7 +1337,7 @@ ContractCall::doApply()
     }
 
     {
-        wasm_valtype_t* p[2] = {wasm_valtype_new_i32(), wasm_valtype_new_i32()};
+        wasm_valtype_t* p[2] = {wasm_valtype_new_i64(), wasm_valtype_new_i32()};
         wasm_valtype_vec_t params;
         wasm_valtype_vec_t results;
         wasm_valtype_vec_new(&params, 2, p);

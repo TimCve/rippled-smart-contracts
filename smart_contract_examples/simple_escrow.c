@@ -14,22 +14,23 @@ Escrow Claim:
 #define TRUE 1
 #define FALSE 0
 
-typedef struct
-{
-    uint32_t amount;
+typedef struct PACKED {
+    uint64_t amount;
     addr_t recipient;
 } params1_t;
 
-typedef struct
-{
+typedef struct PACKED {
     id256_t escrow_id;
 } params2_t;
 
-typedef struct
-{
+typedef struct PACKED {
     addr_t recipient;
-    uint32_t amount;
+    uint64_t amount;
 } escrow_t;
+
+_Static_assert(sizeof(params1_t) == 28, "params1_t size mismatch");
+_Static_assert(sizeof(params2_t) == 32, "params2_t size mismatch");
+_Static_assert(sizeof(escrow_t) == 28, "escrow_t size mismatch");
 
 int32_t addr_eq(addr_t* a, addr_t* b) {
     if (((uint8_t*)a)[0] == ((uint8_t*)b)[0] && ((uint8_t*)a)[1] == ((uint8_t*)b)[1] &&
@@ -59,7 +60,7 @@ int32_t entrypoint(int64_t opt)
         escrow_t escrow;
         escrow.recipient = params.recipient;
         escrow.amount = params.amount;
-        lockCallerXRP((int32_t)params.amount);
+        lockCallerXRP((int64_t)params.amount);
 
         id256_t escrow_id;
         createSmartObject((int32_t)&escrow, sizeof(escrow_t), (int32_t)&escrow_id);
@@ -80,7 +81,7 @@ int32_t entrypoint(int64_t opt)
         getCallerAddr((int32_t)&caller);
 
         if(addr_eq(&caller, &escrow.recipient)) {
-            unlockXRP((int32_t)escrow.amount, (int32_t)&caller);
+            unlockXRP((int64_t)escrow.amount, (int32_t)&caller);
             
             deleteSmartObject((int32_t)&params.escrow_id);
         } else return -8;

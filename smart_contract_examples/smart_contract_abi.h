@@ -7,25 +7,37 @@
 
 #define WASM_IMPORT(mod, name) __attribute__((import_module(mod), import_name(name)))
 
+#ifndef PACKED
+#if defined(__GNUC__) || defined(__clang__)
+#define PACKED __attribute__((packed))
+#else
+#define PACKED
+#endif
+#endif
+
 #define ADDR_SIZE 20u
 #define ID256_SIZE 32u
 #define HASH256_WORDS 4u
 #define HASH256_SIZE 32u
 
-typedef struct
+typedef struct PACKED
 {
     uint8_t bytes[ADDR_SIZE];
 } addr_t;
 
-typedef struct
+typedef struct PACKED
 {
     uint8_t bytes[ID256_SIZE];
 } id256_t;
 
-typedef struct
+typedef struct PACKED
 {
     uint64_t words[HASH256_WORDS];
 } hash256_t;
+
+_Static_assert(sizeof(addr_t) == ADDR_SIZE, "addr_t size mismatch");
+_Static_assert(sizeof(id256_t) == ID256_SIZE, "id256_t size mismatch");
+_Static_assert(sizeof(hash256_t) == HASH256_SIZE, "hash256_t size mismatch");
 
 void
 _g(int32_t id, int32_t max_iters) WASM_IMPORT(SC_HOST_MOD, "_g");
@@ -57,13 +69,13 @@ int32_t
 paramsPassed(void) WASM_IMPORT(SC_HOST_MOD, "paramsPassed");
 
 void
-lockCallerXRP(int32_t amount) WASM_IMPORT(SC_HOST_MOD, "lockCallerXRP");
+lockCallerXRP(int64_t amount) WASM_IMPORT(SC_HOST_MOD, "lockCallerXRP");
 
 void
-lockOwnerXRP(int32_t amount) WASM_IMPORT(SC_HOST_MOD, "lockOwnerXRP");
+lockOwnerXRP(int64_t amount) WASM_IMPORT(SC_HOST_MOD, "lockOwnerXRP");
 
 void
-unlockXRP(int32_t amount, int32_t account_ptr)
+unlockXRP(int64_t amount, int32_t account_ptr)
     WASM_IMPORT(SC_HOST_MOD, "unlockXRP");
 
 void
