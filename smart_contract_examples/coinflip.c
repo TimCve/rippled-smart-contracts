@@ -13,7 +13,7 @@ typedef struct {
     uint8_t accepted;
     uint32_t accepted_timestamp;
     addr_t player;
-    uint64_t player_entry;
+    uint8_t player_side;
     uint64_t player_bet;
 } game_t;
 
@@ -23,32 +23,29 @@ typedef struct PACKED {
 
 typedef struct PACKED {
     id256_t game_id;
-    uint64_t player_entry;
+    uint8_t player_side;
     uint64_t player_bet;
 } params2_t;
 
 typedef struct PACKED {
     id256_t game_id;
-    uint64_t secret;
+    uint8_t secret;
     id256_t salt;
 } params3_t;
 
 typedef struct PACKED {
-    uint64_t secret;
+    uint8_t secret;
     id256_t salt;
 } commit_preimage_t;
 
-_Static_assert(sizeof(game_t) == 80, "game_t size mismatch");
+_Static_assert(sizeof(game_t) == 72, "game_t size mismatch");
 _Static_assert(sizeof(params1_t) == 32, "params1_t size mismatch");
-_Static_assert(sizeof(params2_t) == 48, "params2_t size mismatch");
-_Static_assert(sizeof(params3_t) == 72, "params3_t size mismatch");
-_Static_assert(sizeof(commit_preimage_t) == 40, "commit_preimage_t size mismatch");
+_Static_assert(sizeof(params2_t) == 41, "params2_t size mismatch");
+_Static_assert(sizeof(params3_t) == 65, "params3_t size mismatch");
+_Static_assert(sizeof(commit_preimage_t) == 33, "commit_preimage_t size mismatch");
 _Static_assert(
     _Alignof(game_t) >= _Alignof(uint64_t),
     "game_t alignment must allow uint64_t access");
-_Static_assert(
-    (offsetof(game_t, player_entry) % _Alignof(uint64_t)) == 0,
-    "game_t.player_entry must be uint64_t-aligned");
 _Static_assert(
     (offsetof(game_t, player_bet) % _Alignof(uint64_t)) == 0,
     "game_t.player_bet must be uint64_t-aligned");
@@ -101,7 +98,7 @@ int32_t entrypoint(int64_t opt) {
             game.commit = params.commit;
             game.accepted = FALSE;
             game.player = zero_addr;
-            game.player_entry = 0;
+            game.player_side = 0;
             game.player_bet = 0;
 
             id256_t game_id;
@@ -130,6 +127,8 @@ int32_t entrypoint(int64_t opt) {
                 return -25;
             if (params.player_bet == 0 || params.player_bet > MAX_BET)
                 return -26;
+            if (params.player_side > 1u)
+                return -27;
 
             lockCallerXRP((int64_t)params.player_bet);
             lockOwnerXRP((int64_t)params.player_bet);
@@ -137,7 +136,7 @@ int32_t entrypoint(int64_t opt) {
             game.accepted = TRUE;
             game.accepted_timestamp = (uint32_t)getLedgerTimestamp();
             game.player = contract_caller;
-            game.player_entry = params.player_entry;
+            game.player_side = params.player_side;
             game.player_bet = params.player_bet;
 
             setSmartObject((int32_t)&params.game_id, (int32_t)&game, sizeof(game_t));
@@ -175,15 +174,12 @@ int32_t entrypoint(int64_t opt) {
             if (!hash256_eq(&game.commit, &commit_verif))
                 return -37;
 
-            uint64_t randomizer = params.secret ^ game.player_entry;
-            uint64_t mixed = randomizer;
-            mixed ^= mixed >> 32;
-            mixed ^= mixed >> 16;
-            mixed ^= mixed >> 8;
-            mixed ^= mixed >> 4;
-            mixed ^= mixed >> 2;
-            mixed ^= mixed >> 1;
-            addr_t winner = (mixed & 1ULL) ? game.player : contract_owner;
+            // Dealer reveals 1-byte secret; LSB determines dealer side (0/1).
+            uint8_t dealer_side = (uint8_t)(params.secret & 1u);
+            uint8_t player_side = (uint8_t)(game.player_side & 1u);
+
+            // Player wins on side match; dealer wins on side mismatch.
+            addr_t winner = (player_side == dealer_side) ? game.player : contract_owner;
             int64_t payout = (int64_t)(game.player_bet * 2ULL);
             unlockXRP(payout, (int32_t)&winner);
             deleteSmartObject((int32_t)&params.game_id);
