@@ -351,6 +351,13 @@ The workaround for this error is to add two lines to your profile:
 tools.build:cxxflags=['-DBOOST_ASIO_DISABLE_CONCEPTS']
 ```
 
+### Binaryen Git Submodule
+The `SmartContracts` feature requires `external/binaryen` which is included is a Git submodule and can be pulled in using this command:
+
+```bash
+git submodule update --init --remote external/binaryen
+```
+
 ### Build and Test
 
 1. Create a build directory and move into it.
