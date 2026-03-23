@@ -355,8 +355,13 @@ tools.build:cxxflags=['-DBOOST_ASIO_DISABLE_CONCEPTS']
 The `SmartContracts` feature requires `external/binaryen` which is included is a Git submodule and can be pulled in using this command:
 
 ```bash
-git submodule update --init --remote external/binaryen
+git submodule update --init external/binaryen
 ```
+
+This keeps `external/binaryen` at the repository's pinned commit. Using
+`--remote` advances the submodule to the latest upstream Binaryen revision,
+which may introduce compiler-specific build failures that have not been
+validated with this project yet.
 
 ### Build and Test
 

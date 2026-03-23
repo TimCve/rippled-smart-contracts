@@ -112,6 +112,9 @@ find_package(SQLite3 REQUIRED)
 set(BUILD_TOOLS OFF CACHE BOOL "Don't build Binaryen CLI tools" FORCE)
 set(BUILD_TESTS OFF CACHE BOOL "Don't build Binaryen tests" FORCE)
 set(BUILD_FUZZTEST OFF CACHE BOOL "Don't build Binaryen fuzz tests" FORCE)
+# Binaryen enables -Werror by default in its own CMake, which makes newer
+# compiler warnings in the vendored submodule fail the entire rippled build.
+set(ENABLE_WERROR OFF CACHE BOOL "Don't treat Binaryen warnings as errors" FORCE)
 add_subdirectory(external/binaryen)
 add_library(binaryen::binaryen ALIAS binaryen)
 target_include_directories(binaryen INTERFACE
