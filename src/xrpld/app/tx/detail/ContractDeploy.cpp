@@ -306,12 +306,73 @@ getFuncInfo(BinaryenModuleRef m, std::string const& funcNameOrIndex)
     return out;
 }
 
+#ifndef NDEBUG
+class MeterTrace
+{
+    beast::Journal j_;
+    int depth_ = 0;
+
+public:
+    explicit MeterTrace(beast::Journal j) : j_(j)
+    {
+    }
+
+    class Scope
+    {
+        MeterTrace* trace_ = nullptr;
+
+    public:
+        explicit Scope(MeterTrace* trace) : trace_(trace)
+        {
+            if (trace_)
+                ++trace_->depth_;
+        }
+
+        ~Scope()
+        {
+            if (trace_ && trace_->depth_ > 0)
+                --trace_->depth_;
+        }
+    };
+
+    void
+    log(std::string const& msg) const
+    {
+        JLOG(j_.debug())
+            << "[smart-contract meter] "
+            << std::string(static_cast<std::size_t>(depth_ * 2), ' ') << msg;
+    }
+};
+#else
+class MeterTrace
+{
+public:
+    explicit MeterTrace(beast::Journal)
+    {
+    }
+
+    class Scope
+    {
+    public:
+        explicit Scope(MeterTrace*)
+        {
+        }
+    };
+
+    void
+    log(std::string const&) const
+    {
+    }
+};
+#endif
+
 // Computes conservative worst-case execution cost for a validated module.
 class Analyzer
 {
 private:
     BinaryenModuleRef m;
     CostModel cm;
+    MeterTrace* trace_ = nullptr;
 
     enum class Mark
     {
@@ -323,8 +384,8 @@ private:
     std::unordered_map<std::string, std::uint64_t> memo;
 
 public:
-    Analyzer(BinaryenModuleRef mod, CostModel model)
-        : m(mod), cm(std::move(model))
+    Analyzer(BinaryenModuleRef mod, CostModel model, MeterTrace* trace = nullptr)
+        : m(mod), cm(std::move(model)), trace_(trace)
     {
     }
 
@@ -475,6 +536,65 @@ private:
         return r;
     }
 
+    static std::string
+    describeLabel(std::string const& label, char const* fallback)
+    {
+        return label.empty() ? std::string(fallback) : label;
+    }
+
+    static std::string
+    formatOutcomes(Outcomes const& o)
+    {
+        std::string out = "{";
+        bool wrote = false;
+        if (o.canContinue)
+        {
+            out += "continue=" + std::to_string(o.continueCost);
+            wrote = true;
+        }
+        if (o.canExit)
+        {
+            if (wrote)
+                out += ", ";
+            out += "exit=" + std::to_string(o.exitCost);
+            wrote = true;
+        }
+        if (!wrote)
+            out += "unreachable";
+        out += "}";
+        return out;
+    }
+
+    static std::string
+    formatIterOut(IterOut const& o)
+    {
+        std::string out = "{";
+        bool wrote = false;
+        if (o.canContinue)
+        {
+            out += "continue=" + std::to_string(o.continueCost);
+            wrote = true;
+        }
+        if (o.bubble.canContinue || o.bubble.canExit)
+        {
+            if (wrote)
+                out += ", ";
+            out += "bubble=" + formatOutcomes(o.bubble);
+            wrote = true;
+        }
+        if (!wrote)
+            out += "unreachable";
+        out += "}";
+        return out;
+    }
+
+    void
+    trace(std::string const& msg) const
+    {
+        if (trace_)
+            trace_->log(msg);
+    }
+
 public:
     std::uint64_t
     costFunctionWorst(std::string const& funcNameOrIndex)
@@ -484,27 +604,39 @@ public:
 
         auto it = memo.find(cname);
         if (it != memo.end())
+        {
+            trace("memoized function " + cname + " = " + std::to_string(it->second));
             return it->second;
+        }
 
         auto& mark = marks[cname];
         if (mark == Mark::Gray)
             throw std::runtime_error("Recursion detected at: " + cname);
         if (mark == Mark::Black)
+        {
+            trace("reusing completed function " + cname + " = " + std::to_string(memo[cname]));
             return memo[cname];
+        }
 
         mark = Mark::Gray;
 
         if (fi0.isImport)
         {
             std::uint64_t c = cm.costImported(fi0.importModule, fi0.importBase);
+            trace(
+                "import function " + fi0.importModule + "." + fi0.importBase +
+                " (" + cname + ") = " + std::to_string(c));
             memo[cname] = c;
             mark = Mark::Black;
             return c;
         }
 
+        trace("enter function " + cname);
+        MeterTrace::Scope scope(trace_);
         BinaryenExpressionRef body = BinaryenFunctionGetBody(fi0.ref);
         std::vector<LabelFrame> stack;
         std::uint64_t cost = costExpr(body, 0, stack);
+        trace("function " + cname + " total = " + std::to_string(cost));
 
         memo[cname] = cost;
         mark = Mark::Black;
@@ -625,7 +757,13 @@ private:
             IterOut fOut = f ? costLoopBodyIter(f, k, stack, loopDepth) : k;
 
             stack.pop_back();
-            return addCostIter(mergeMaxIter(tOut, fOut), node + condCost);
+            IterOut result =
+                addCostIter(mergeMaxIter(tOut, fOut), node + condCost);
+            trace(
+                "if(iter): cond=" + std::to_string(condCost) + ", true=" +
+                formatIterOut(tOut) + ", false=" + formatIterOut(fOut) +
+                ", result=" + formatIterOut(result));
+            return result;
         }
 
         if (id == BinaryenLoopId())
@@ -682,6 +820,7 @@ private:
             std::uint64_t vCost = val ? costExpr(val, 0, stack) : 0;
 
             IterOut best;
+            std::string branchInfo;
             BinaryenIndex n = BinaryenSwitchGetNumNames(e);
             for (BinaryenIndex i = 0; i < n; i++)
             {
@@ -701,6 +840,9 @@ private:
                     takeOut = iterFromOutcomes(stack[idx].out);
                 }
                 best = mergeMaxIter(best, takeOut);
+                if (!branchInfo.empty())
+                    branchInfo += ", ";
+                branchInfo += tgt + "=" + formatIterOut(takeOut);
             }
             std::string def = BinaryenSwitchGetDefaultName(e);
             if (!def.empty())
@@ -720,9 +862,17 @@ private:
                     takeOut = iterFromOutcomes(stack[idx].out);
                 }
                 best = mergeMaxIter(best, takeOut);
+                if (!branchInfo.empty())
+                    branchInfo += ", ";
+                branchInfo += "default=" + formatIterOut(takeOut);
             }
 
-            return addCostIter(best, node + cCost + vCost);
+            IterOut result = addCostIter(best, node + cCost + vCost);
+            trace(
+                "switch(iter): cond=" + std::to_string(cCost) +
+                ", value=" + std::to_string(vCost) + ", branches=[" +
+                branchInfo + "], result=" + formatIterOut(result));
+            return result;
         }
 
         if (id == BinaryenReturnId())
@@ -770,6 +920,11 @@ private:
                                    bodyOut.continueCost);
         }
         res = addCost(res, cm.base);
+        trace(
+            "loop " + describeLabel(loopName, "<anon-loop>") +
+            " guard_max=" + std::to_string(N) + ", incoming=" +
+            formatOutcomes(k) + ", body=" + formatIterOut(bodyOut) +
+            ", result=" + formatOutcomes(res));
         return res;
     }
 
@@ -825,7 +980,12 @@ private:
             Outcomes fOut = f ? costExprOutcomes(f, k, stack, loopDepth) : k;
 
             stack.pop_back();
-            return addCost(mergeMax(tOut, fOut), node + condCost);
+            Outcomes result = addCost(mergeMax(tOut, fOut), node + condCost);
+            trace(
+                "if(outcomes): cond=" + std::to_string(condCost) +
+                ", true=" + formatOutcomes(tOut) + ", false=" +
+                formatOutcomes(fOut) + ", result=" + formatOutcomes(result));
+            return result;
         }
 
         if (id == BinaryenLoopId())
@@ -866,6 +1026,7 @@ private:
             std::uint64_t vCost = val ? costExpr(val, 0, stack) : 0;
 
             Outcomes best;
+            std::string branchInfo;
             BinaryenIndex n = BinaryenSwitchGetNumNames(e);
             for (BinaryenIndex i = 0; i < n; i++)
             {
@@ -874,6 +1035,9 @@ private:
                 Outcomes takeOut =
                     (idx == loopDepth) ? continueOnly(0) : stack[idx].out;
                 best = mergeMax(best, takeOut);
+                if (!branchInfo.empty())
+                    branchInfo += ", ";
+                branchInfo += tgt + "=" + formatOutcomes(takeOut);
             }
             std::string def = BinaryenSwitchGetDefaultName(e);
             if (!def.empty())
@@ -882,9 +1046,17 @@ private:
                 Outcomes takeOut =
                     (idx == loopDepth) ? continueOnly(0) : stack[idx].out;
                 best = mergeMax(best, takeOut);
+                if (!branchInfo.empty())
+                    branchInfo += ", ";
+                branchInfo += "default=" + formatOutcomes(takeOut);
             }
 
-            return addCost(best, node + cCost + vCost);
+            Outcomes result = addCost(best, node + cCost + vCost);
+            trace(
+                "switch(outcomes): cond=" + std::to_string(cCost) +
+                ", value=" + std::to_string(vCost) + ", branches=[" +
+                branchInfo + "], result=" + formatOutcomes(result));
+            return result;
         }
 
         if (id == BinaryenReturnId())
@@ -1005,7 +1177,14 @@ private:
             std::uint64_t fCost = f ? costExpr(f, k, stack) : k;
 
             stack.pop_back();
-            return node + condCost + worst(tCost, fCost);
+            std::uint64_t const chosen = worst(tCost, fCost);
+            std::uint64_t const total = node + condCost + chosen;
+            trace(
+                "if: node=" + std::to_string(node) + ", cond=" +
+                std::to_string(condCost) + ", true=" + std::to_string(tCost) +
+                ", false=" + std::to_string(fCost) + ", chosen=" +
+                std::to_string(chosen) + ", total=" + std::to_string(total));
+            return total;
         }
 
         if (id == BinaryenLoopId())
@@ -1030,21 +1209,41 @@ private:
 
             stack.pop_back();
 
+            std::uint64_t total = node + k;
             if (bodyOut.canContinue)
             {
                 if (bodyOut.canExit)
                 {
-                    return node +
+                    total = node +
                         (static_cast<std::uint64_t>(N) - 1) *
                             bodyOut.continueCost +
                         bodyOut.exitCost;
+                    trace(
+                        "loop " + describeLabel(loopName, "<anon-loop>") +
+                        ": node=" + std::to_string(node) + ", guard_max=" +
+                        std::to_string(N) + ", body=" +
+                        formatOutcomes(bodyOut) + ", total=" +
+                        std::to_string(total));
+                    return total;
                 }
-                return node +
+                total = node +
                     static_cast<std::uint64_t>(N) * bodyOut.continueCost + k;
+                trace(
+                    "loop " + describeLabel(loopName, "<anon-loop>") +
+                    ": node=" + std::to_string(node) + ", guard_max=" +
+                    std::to_string(N) + ", body=" +
+                    formatOutcomes(bodyOut) + ", total=" +
+                    std::to_string(total));
+                return total;
             }
             if (bodyOut.canExit)
-                return node + bodyOut.exitCost;
-            return node + k;
+                total = node + bodyOut.exitCost;
+            trace(
+                "loop " + describeLabel(loopName, "<anon-loop>") +
+                ": node=" + std::to_string(node) + ", guard_max=" +
+                std::to_string(N) + ", body=" + formatOutcomes(bodyOut) +
+                ", total=" + std::to_string(total));
+            return total;
         }
 
         if (id == BinaryenBreakId())
@@ -1078,6 +1277,7 @@ private:
             std::uint64_t vCost = val ? costExpr(val, 0, stack) : 0;
 
             std::uint64_t best = 0;
+            std::string branchInfo;
             BinaryenIndex n = BinaryenSwitchGetNumNames(e);
             for (BinaryenIndex i = 0; i < n; i++)
             {
@@ -1086,6 +1286,9 @@ private:
                 std::uint64_t kExit = resolveTargetK(tgt, stack, isLoop);
                 std::uint64_t takeK = isLoop ? 0 : kExit;
                 best = worst(best, takeK);
+                if (!branchInfo.empty())
+                    branchInfo += ", ";
+                branchInfo += tgt + "=" + std::to_string(takeK);
             }
             std::string def = BinaryenSwitchGetDefaultName(e);
             if (!def.empty())
@@ -1094,9 +1297,18 @@ private:
                 std::uint64_t kExit = resolveTargetK(def, stack, isLoop);
                 std::uint64_t takeK = isLoop ? 0 : kExit;
                 best = worst(best, takeK);
+                if (!branchInfo.empty())
+                    branchInfo += ", ";
+                branchInfo += "default=" + std::to_string(takeK);
             }
 
-            return node + cCost + vCost + best;
+            std::uint64_t const total = node + cCost + vCost + best;
+            trace(
+                "switch: node=" + std::to_string(node) + ", cond=" +
+                std::to_string(cCost) + ", value=" + std::to_string(vCost) +
+                ", branches=[" + branchInfo + "], chosen=" +
+                std::to_string(best) + ", total=" + std::to_string(total));
+            return total;
         }
 
         if (id == BinaryenReturnId())
@@ -1129,7 +1341,26 @@ private:
                     costFunctionWorst(fi.canonicalName);
             }
 
-            return node + ops + callCost + k;
+            std::uint64_t const total = node + ops + callCost + k;
+            if (fi.isImport)
+            {
+                trace(
+                    "call import " + fi.importModule + "." + fi.importBase +
+                    ": node=" + std::to_string(node) + ", operands=" +
+                    std::to_string(ops) + ", import=" +
+                    std::to_string(callCost) + ", continuation=" +
+                    std::to_string(k) + ", total=" + std::to_string(total));
+            }
+            else
+            {
+                trace(
+                    "call function " + fi.canonicalName + ": node=" +
+                    std::to_string(node) + ", operands=" +
+                    std::to_string(ops) + ", internal_call=" +
+                    std::to_string(callCost) + ", continuation=" +
+                    std::to_string(k) + ", total=" + std::to_string(total));
+            }
+            return total;
         }
 
         if (id == BinaryenSelectId())
@@ -1516,14 +1747,26 @@ struct MeterResult
 };
 
 MeterResult
-meterContract(void const* data, std::size_t size)
+meterContract(void const* data, std::size_t size, beast::Journal j)
 {
     // Metering runs only in doApply; preflight performs policy validation above.
     ModuleHandle const module{data, size};
     BinaryenModuleRef const m = module.get();
     std::string const entrypoint = getEntrypointFunctionCanonicalName(m);
+#ifndef NDEBUG
+    MeterTrace trace(j);
+    trace.log("starting meter for entrypoint " + entrypoint);
+    Analyzer az(m, makeCostModel(), &trace);
+#else
+    (void)j;
     Analyzer az(m, makeCostModel());
+#endif
     std::uint64_t worst = az.costFunctionWorst(entrypoint);
+#ifndef NDEBUG
+    trace.log(
+        "final metered cost for entrypoint " + entrypoint + " = " +
+        std::to_string(worst));
+#endif
 
     return MeterResult{entrypoint, worst};
 }
@@ -1533,11 +1776,12 @@ tryMeterContract(
     void const* data,
     std::size_t size,
     std::uint64_t& outCost,
-    std::string& outError)
+    std::string& outError,
+    beast::Journal j)
 {
     try
     {
-        MeterResult res = meterContract(data, size);
+        MeterResult res = meterContract(data, size, j);
         outCost = res.cost;
         return true;
     }
@@ -1656,7 +1900,8 @@ ContractDeploy::doApply()
     auto const& code = ctx_.tx.getFieldVL(sfContractCode);
     std::uint64_t contractCost = 0;
     std::string meterError;
-    if (!tryMeterContract(code.data(), code.size(), contractCost, meterError))
+    if (!tryMeterContract(
+            code.data(), code.size(), contractCost, meterError, ctx_.journal))
     {
         JLOG(ctx_.journal.error())
             << "Smart contract meter failed: " << meterError;
